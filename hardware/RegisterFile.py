@@ -52,10 +52,22 @@ class RegisterFile:
             self.registers[self.reg_map[key]] = 0 
         else: 
             self.registers[self.reg_map[key]] = value 
+            
     def __str__(self): 
         print("Values stored in registers are:")
         for name in self.reg_map.keys(): 
             print(f"{name}: {self.registers[self.reg_map[name]]}")
         return ""
+    
+class RegisterAllocationTable: 
+    def __init__(self, num_physical_register): 
+        self.num_physical_register = num_physical_register
+        self.table = dict()
+        self.free_list = [i for i in range(num_physical_register)]
+        self.next_free = 0
+        self.next_virt = 0
+        
+        pass 
+
         
 
