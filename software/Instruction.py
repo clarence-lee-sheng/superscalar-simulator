@@ -1,7 +1,10 @@
 class Instruction: 
-    def __init__(self, opcode):
+    def __init__(self, opcode, operands, cycles_to_execute):
         self.opcode
-        self.arg1 = None
-        self.arg2 = None
-        self.arg3 = None
+        self.operands = dict() 
+        self.cycles_to_execute = 0 
+
+    def action():
+        pass 
+
         
