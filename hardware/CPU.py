@@ -1,13 +1,34 @@
 
+import sys
+import os
+
+sys.path.append(os.path.abspath('..'))
+
+
 from abc import ABC, abstractmethod
+from .RegisterFile import RegisterFile
+from .Memory import Memory 
+from .InstructionQueue import InstructionQueue
+from software.Assembler import Assembler 
+import re
+import os
 
 class CPU(ABC):
-    def __init__(self, registers, memory, assembler):
-        self._registers = registers 
-        self._memory = memory 
+    def __init__(self, config):
+        self._registers = RegisterFile(**config["register_file_params"])
+        self._memory = Memory(mem_size=config["mem_size"])
         self._pc = 0
         self._program = None 
-        self._assembler = assembler
+        self._assembler = Assembler()
+        self.config = config
+
+        self.statistics = {
+            "instructions_count": 0,
+            "load_count": 0,
+            "store_count": 0, 
+            "cycles": 0,
+            "branch_count": 0,
+        }
     
     @property
     def registers(self):
