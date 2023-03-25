@@ -1,4 +1,11 @@
 from collections import deque
+from copy import deepcopy
+
+
+# decode reads instruction 
+# assign microops and reads the source and destination registers 
+# checks against the rename table and renames it to the appropriate renamed register 
+
 
 class RegisterFile:
     def __init__(self, reg_size=32, reg_map=None): 
@@ -62,15 +69,14 @@ class RegisterFile:
         return ""
     
 class RegisterAliasTable: 
-    def __init__(self, num_physical_register, architectural_registers): 
-        assert (num_physical_register >= len(architectural_registers)), "Number of physical registers must be greater than or equal to the number of architectural registers"
-        self.num_physical_register = num_physical_register
+    def __init__(self, n_physical_registers, architectural_registers): 
+        self.n_physical_registers = n_physical_registers
 
         self.table = dict()
         for i, a in enumerate(architectural_registers): 
-            self.table[a] = i
+            self.table[a] = f"P{i}"
 
-        self.free_list = deque([j for j in range(i+1, num_physical_register)])
+        self.free_list = deque([f"P{i}" for i in range(n_physical_registers)])
 
     def __getitem__(self, key):
         print(self.table)
@@ -78,6 +84,13 @@ class RegisterAliasTable:
     
     def __setitem__(self, key, value):
         self.table[key] = value
+
+    def has_free(self): 
+        return len(self.free_list) > 0
+    
+    def free(self, key): 
+        assert key in ["p{i}" for i in range(self.n_physical_registers)], "Invalid physical register"
+        self.free_list.appendleft(key)
 
     def __str__(self): 
         print("Register Alias Table:")
@@ -95,37 +108,46 @@ class RegisterFile:
         if n_physical_registers is None:
             n_physical_registers = len(architectural_registers) + n_reorder_buffer_entries
 
+        assert (n_physical_registers >= len(architectural_registers)), "Number of physical registers must be greater than or equal to the number of architectural registers"
+
         self.RAT = RegisterAliasTable(n_physical_registers, architectural_registers)
+        self.committed_map_table = deepcopy(self.RAT)
         self.architectural_registers = architectural_registers
-        self.physical_registers = [0] * n_physical_registers
+        self.physical_registers = [f"P{i}" for i in range(n_physical_registers)]
+        self.register_file = [0] * n_physical_registers
         self.size = n_physical_registers
+        self.physical_register_map = {f"P{i}": i for i in range(n_physical_registers)}
 
     def allocate_register(self, register_name): 
+        assert self.RAT.has_free(), "No free registers available"
         if register_name == "zero": 
             return self.RAT["zero"]
         else: 
             previous_physical_register = self.RAT[register_name]
-            next_free_register = self.RAT.free_list.pop()
+            next_free_register = self.free_list.pop()
             self.RAT[register_name] = next_free_register
-            self.RAT.free_list.appendleft(previous_physical_register)
+            self.RAT.free(previous_physical_register)
 
     def rename(self, register_name, type="dest"):
         if type == "dest": 
-            self.allocate_register(register_name)
+            if self.RAT.has_free(): 
+                self.allocate_register(register_name)
+            else: 
+                return False
         return self.RAT[register_name] 
         
     def __getitem__(self, key):
         if type(key) == str: 
-            return self.physical_registers[self.RAT[key]]
+            return self.register_file[self.physical_register_map[self.RAT[key]]]
         elif type(key) == int: 
-            return self.physical_registers[key]
+            return self.register_file[key]
 
     def __setitem__(self, key, value): 
         if type(key) == str:
             if key == "zero": 
-                self.physical_registers[self.RAT["zero"]] = 0 
+                self.register_file[self.RAT["zero"]] = 0 
             else: 
-                self.physical_registers[self.RAT[key]] = value
+                self.register_file[self.physical_register_map[self.RAT[key]]] = value
         else: 
             self.physical_registers[key] = value 
 
