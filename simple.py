@@ -60,7 +60,7 @@ class Simple(CPU):
             instruction.operands[0] = self.registers[instruction.operands[0]]
             instruction.operands[1] = self.registers[reg] + int(offset)
         if opcode == "addi":
-            instruction.operands[1] = int(instruction.operands[1])
+            instruction.operands[2] = int(instruction.operands[2])
         return instruction
     def execute(self, decoded): 
         intermediate = dict()
@@ -88,7 +88,7 @@ class Simple(CPU):
             intermediate["type"] = "memory"
             intermediate["id"] = decoded.operands[1]
         elif opcode == "addi":
-            intermediate["value"] = self.registers[decoded.operands[0]] + decoded.operands[1]
+            intermediate["value"] = self.registers[decoded.operands[1]] + decoded.operands[2]
             intermediate["type"] = "register"
             intermediate["id"] = decoded.operands[0]
         elif opcode == "ecall":
