@@ -8,7 +8,7 @@ sys.path.append(os.path.abspath('..'))
 from abc import ABC, abstractmethod
 from .RegisterFile import RegisterFile
 from .Memory import Memory 
-from .InstructionQueue import InstructionQueue
+from .Buffer import FetchBuffer
 from software.Assembler import Assembler 
 import re
 import os
