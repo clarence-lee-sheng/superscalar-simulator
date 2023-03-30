@@ -9,6 +9,8 @@ class ReorderBufferEntry:
         self.stale_physical_destination = None 
         self.exception = False
 
+# everytime a new instruction is met, rename and store in the reorder buffer 
+
 class ReorderBuffer: 
     def __init__(self, reorder_buffer_size, register_file): 
         self.reorder_buffer_size = reorder_buffer_size
@@ -50,4 +52,6 @@ class ReorderBuffer:
 
     def flush(self): 
         self.tail = self.head
+        # rewrite stale physical destination to RAT 
+
 
