@@ -1,15 +1,10 @@
 class Instruction: 
-    def __init__(self, opcode, operands, cycles_to_execute):
+    def __init__(self, pc, opcode, operands, cycles_to_execute):
+        self.pc = pc
+        self.micro_op = None
         self.opcode = opcode
         self.operands = operands
         self.cycles_to_execute = cycles_to_execute
-
-        if opcode in ["add", "sub", "mul", "div", "addi", "subi", "muli", "divi"]:
-            self.execution_unit = "ALU"
-        elif opcode in ["lw", "sw", "li", "la"]:
-            self.execution_unit = "LSU"
-        elif opcode in ["bne", "beq", "j", "jal", "jr"]:
-            self.execution_unit = "BRANCH UNIT"
 
     def action():
         pass 
