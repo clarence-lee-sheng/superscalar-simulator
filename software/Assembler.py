@@ -1,5 +1,12 @@
 import re
 from .Instruction import Instruction
+import json 
+import os 
+import pathlib
+
+
+instruction_cycle_times = json.load(open(os.path.join(os.path.dirname(__file__),"config\\instruction_cycles_times.json")))
+
 
 class Assembler(): 
     def __init__(self): 
@@ -15,7 +22,6 @@ class Assembler():
         mode = "None"
         flag = False
         # print(program_file.readlines())
-
         instruction_pointer = 0
         start_function = ""
         call = ""
@@ -75,17 +81,18 @@ class Assembler():
                 if match:
                     continue 
             # print("parse")
-                instruction = self.parse_instruction(line, labels, memory_locations)
+                instruction = self.parse_instruction(len(program), line, labels, memory_locations)
                 program.append(instruction)
             # print(program)
 
         registers["gp"] = labels[start_function]      
         return(program)
 
-    def parse_instruction(self, line, labels, memory_locations): 
+    def parse_instruction(self, pc, line, labels, memory_locations): 
         
         line = line.strip()
         line = line.replace(",", "").split()
+        
         opcode = line[0]
 
         if opcode == "la": 
@@ -95,5 +102,8 @@ class Assembler():
         elif opcode == "beq" or opcode == "bne" or opcode == "blt" or opcode == "bge":
             line[3] = labels[line[3]]   
         elif opcode == "jal" or opcode == "j":
-            line[1] = labels[line[1]]     
-        return line 
+            line[1] = labels[line[1]]            
+        operands = line[1:]
+
+        
+        return Instruction(pc, opcode, operands, instruction_cycle_times[opcode])
