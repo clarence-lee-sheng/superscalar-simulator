@@ -4,6 +4,7 @@ from hardware.CPU import CPU
 from hardware.Buffer import FetchBuffer, DecodeBuffer
 from hardware.BranchPredictor import BranchPredictor
 from software.Assembler import Assembler 
+from software.Instruction import DecodedInstruction
 import re
 import os
 
@@ -55,6 +56,7 @@ class PipelinedProcessor(CPU):
         self.jump_instructions = ["j", "jr", "jal", "jalr", "ret"]
         self.alu_instructions = ["add", "sub", "mul", "div", "addi", "subi", "muli", "divi"]
         self.load_store_instructions = ["lw", "sw", "li", "la"]
+        print(self.registers)
 
     def fetch(self): 
         if not self.program: 
@@ -95,22 +97,47 @@ class PipelinedProcessor(CPU):
                 else:     
                     self.pc += 1
 
+    #rename the registers
+
     def decode(self): 
         # implement decode and rename 
+
+        def rename(instruction): 
+            if instruction.dest:
+                instruction.dest = self.registers.RAT.table[instruction.dest] if instruction.dest in self.registers.RAT.table else instruction.dest
+            if instruction.src1: 
+                instruction.src1 = self.registers.RAT.table[instruction.src1] if instruction.src1 in self.registers.RAT.table else instruction.src1
+            if instruction.src2: 
+                instruction.src2 = self.registers.RAT.table[instruction.src2] if instruction.src2 in self.registers.RAT.table else instruction.src2
+            if instruction.src3:
+                instruction.src3 = self.registers.RAT.table[instruction.src3] if instruction.src3 in self.registers.RAT.table else instruction.src3
+            return instruction
+         
         for i in range(self.config["n_instruction_decode_cycle"]): 
+            if self.decode_buffer.is_full(): 
+                break
             if self.fetch_buffer.is_empty():
                 break
             instruction = self.fetch_buffer.dequeue()
-            opcode = instruction[0]
-            operands = instruction[1:]
-            print(opcode, operands)
+            opcode = instruction.opcode
+            operands = instruction.operands
             if instruction not in self.branch_instructions and instruction not in self.jump_instructions: 
-                instruction.dest = operands[0]
-                instruction.src1 = operands[1] if len(operands >= 2) else None 
-                instruction.src2 = operands[2] if len(operands >= 3) else None 
+                dest = operands[0]
+                src1 = operands[1] if len(operands) >= 2 else None 
+                src2 = operands[2] if len(operands) >= 3 else None 
+                src3 = operands[3] if len(operands) >= 4 else None
+                decoded_instruction = DecodedInstruction(instruction=instruction, dest=dest, src1=src1, src2=src2, src3=src3)
+                print(src1, src2, src3)
             else: 
-                instruction.dest = None 
-                instruction.src1 = operands
+                dest = None 
+                src1 = operands[0] if len(operands) >= 1 else None
+                src2 = operands[1] if len(operands) >= 2 else None
+                src3 = operands[2] if len(operands) >= 3 else None
+                decoded_instruction = DecodedInstruction(instruction=instruction, dest=dest, src1=src1, src2=src2, src3=src3)
+
+
+            instruction = rename(decoded_instruction)
+            print(instruction)
 
                 # if len()
             if opcode in self.alu_instructions:
@@ -119,6 +146,8 @@ class PipelinedProcessor(CPU):
                 instruction.micro_op = "LSU"
             elif opcode in self.branch_instructions or self.jump_instructions:
                 instruction.micro_op = "BRANCH UNIT"
+            
+       
 
     def dispatch(self): 
         
@@ -136,6 +165,7 @@ class PipelinedProcessor(CPU):
         while self.statistics["cycles"] < 1000: 
             self.statistics["cycles"] += 5
             instruction = self.fetch()
+            decoded = self.decode()
             # decoded = self.decode(instruction) 
             # intermediate = self.execute(decoded)
             # self.memory_access(intermediate)
