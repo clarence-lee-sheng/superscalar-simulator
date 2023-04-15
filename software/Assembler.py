@@ -21,7 +21,6 @@ class Assembler():
         memory_locations = {}        
         mode = "None"
         flag = False
-        # print(program_file.readlines())
         instruction_pointer = 0
         start_function = ""
         call = ""
@@ -30,7 +29,7 @@ class Assembler():
         labels = {
         }
         for line in program_file.readlines(): 
-            if not line.strip(): 
+            if not line.strip() or line.strip()[0] == "#": 
                 continue 
             instruction = []
             if ".text" in line: 
@@ -53,7 +52,7 @@ class Assembler():
         program_file = open(assembly_filename, "r")
 
         for line in program_file.readlines(): 
-            if not line.strip():
+            if not line.strip() or line.strip()[0] == "#":
                 continue
             if ".data" in line: 
                 mode = "data"
@@ -64,7 +63,7 @@ class Assembler():
 
             if mode == "data": 
                 line = line.strip()
-                if line == "":
+                if line == "" or line.strip()[0] == "#":
                     continue
                 var = line.split(":")
                 var_name = var[0]
@@ -80,10 +79,8 @@ class Assembler():
                 match = re.search(r"\w+(?=:)", line)
                 if match:
                     continue 
-            # print("parse")
                 instruction = self.parse_instruction(len(program), line, labels, memory_locations)
                 program.append(instruction)
-            # print(program)
 
         registers["gp"] = labels[start_function]      
         return(program)
