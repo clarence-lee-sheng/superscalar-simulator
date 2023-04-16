@@ -1,4 +1,5 @@
 from collections import deque
+import re
 from copy import deepcopy
 
 
@@ -69,6 +70,7 @@ class RegisterFile:
         return ""
     
 class RegisterAliasTable: 
+    # Explicit renaming: https://people.eecs.berkeley.edu/~kubitron/courses/cs252-S09/lectures/lec08-prediction.pdf
     def __init__(self, n_physical_registers, architectural_registers): 
         self.n_physical_registers = n_physical_registers
 
@@ -76,10 +78,9 @@ class RegisterAliasTable:
         for i, a in enumerate(architectural_registers): 
             self.table[a] = f"P{i}"
 
-        self.free_list = deque([f"P{i}" for i in range(n_physical_registers)])
+        self.free_list = deque([f"P{i}" for i in range(1,n_physical_registers)])
 
     def __getitem__(self, key):
-        print(self.table)
         return self.table[key]
     
     def __setitem__(self, key, value):
@@ -89,7 +90,7 @@ class RegisterAliasTable:
         return len(self.free_list) > 0
     
     def free(self, key): 
-        assert key in ["p{i}" for i in range(self.n_physical_registers)], "Invalid physical register"
+        assert key in [f"P{i}" for i in range(self.n_physical_registers)], "Invalid physical register"
         self.free_list.appendleft(key)
 
     def __str__(self): 
@@ -107,6 +108,7 @@ class RegisterFile:
         ):
         if n_physical_registers is None:
             n_physical_registers = len(architectural_registers) + n_reorder_buffer_entries
+        print("Number of physical registers:", n_physical_registers)
 
         assert (n_physical_registers >= len(architectural_registers)), "Number of physical registers must be greater than or equal to the number of architectural registers"
 
@@ -124,21 +126,41 @@ class RegisterFile:
             return self.RAT["zero"]
         else: 
             previous_physical_register = self.RAT[register_name]
-            next_free_register = self.free_list.pop()
+            next_free_register = self.RAT.free_list.pop()
+            print(f"Allocating {next_free_register} to {register_name} (was {previous_physical_register})")
             self.RAT[register_name] = next_free_register
-            self.RAT.free(previous_physical_register)
+            return previous_physical_register
+            # self.RAT.free(previous_physical_register)
 
     def rename(self, register_name, type="dest"):
         if type == "dest": 
             if self.RAT.has_free(): 
-                self.allocate_register(register_name)
+                stale_physical_register = self.allocate_register(register_name)
+                return self.RAT.table[register_name], stale_physical_register
             else: 
                 return False
-        return self.RAT[register_name] 
+        elif type == "src": 
+            if register_name:
+                reg = re.search(r"(?<=\()(.*?)(?=\))", str(register_name))
+                if reg: 
+                    reg = reg.group(0)
+                    offset = re.search(r".*(?=\()", register_name).group()
+            else: 
+                reg = None
+            if register_name in self.RAT.table.keys(): 
+                return self.RAT.table[register_name]
+            elif reg: 
+                return f"{offset}({self.RAT.table[reg]})"
+            else:
+                return register_name
+        
         
     def __getitem__(self, key):
         if type(key) == str: 
-            return self.register_file[self.physical_register_map[self.RAT[key]]]
+            if key in self.physical_register_map:
+                return self.register_file[self.physical_register_map[key]]
+            elif key in self.architectural_registers:
+                return self.register_file[self.physical_register_map[self.RAT[key]]]
         elif type(key) == int: 
             return self.register_file[key]
 
