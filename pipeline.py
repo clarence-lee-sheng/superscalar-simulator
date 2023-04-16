@@ -2,9 +2,10 @@ from hardware.RegisterFile import RegisterFile
 from hardware.Memory import Memory 
 from hardware.CPU import CPU
 from hardware.Buffer import FetchBuffer, DecodeBuffer
+from hardware.ReorderBuffer import ReorderBuffer, ReorderBufferEntry
 from hardware.BranchPredictor import BranchPredictor
 from software.Assembler import Assembler 
-from software.Instruction import DecodedInstruction
+from software.Instruction import decodedInstruction
 import re
 import os
 
@@ -22,14 +23,17 @@ assembler = Assembler()
 config = { 
     "rob_buffer_size": 4,
     "fetch_buffer_size": 10,
-    "decode_buffer_size": 1000,
+    "decode_buffer_size": 100,
+    "reorder_buffer_size": 128,
     "n_instruction_fetch_cycle": 8, 
     "n_instruction_decode_cycle": 8,
     "lsq_buffer_size": 4,
     "rs_buffer_size": 4,
     "n_gprs": 32,
     "mem_size": 4096,
-    "register_file_params": {}, 
+    "register_file_params": {
+        "n_physical_registers": 128,
+    }, 
     "branch_predictor_type": "static" 
 }
 
@@ -44,19 +48,170 @@ config = {
 # check if any registers can be committed 
 
 # if branch, 
+class FetchUnit: 
+    def __init__(self, fetch_buffer, n_instruction_fetch_cycle): 
+        self.fetch_buffer = fetch_buffer
+        self.n_instruction_fetch_cycle = n_instruction_fetch_cycle
+        self.pc = 0
+    
+    def cycle(self): 
+        self.busy = True 
+        if self.fetch_buffer.is_full():
+            return
+        self.busy = False
+        
+class DecodeUnit: 
+    def __init__(self, decode_buffer, n_instruction_decode_cycle, reorder_buffer): 
+        self.decode_buffer = decode_buffer
+        self.reorder_buffer = reorder_buffer
+        self.n_instruction_decode_cycle = n_instruction_decode_cycle
+        self.busy = False 
 
+    def cycle(self): 
+        self.busy = True 
+        if self.decode_buffer.is_full():
+            return
+        self.busy = False 
 
+class ALU:
+    def __init__(self, decoded_instruction): 
+        self.decoded_instruction = decoded_instruction
+        self.cycles_executed = 0
+        self.busy = False
+    def allocate(self, decoded_instruction): 
+        self.busy = True
+        self.decoded_instruction = decoded_instruction
+    def deallocate(self, result): 
+        self.busy = False
+        self.cycles_executed = 0
+        return result
+    def cycle(self): 
+        if not self.busy:
+            return 
+        self.cycles_executed += 1
+        if self.cycles_executed < self.decoded_instruction.n_cycles_to_execute:
+            return 
+        intermediate = dict()
+        opcode = self.decoded_instruction.opcode
+
+        if opcode == "add":
+            intermediate["value"] = self.decoded_instruction.src1 + self.decoded_instruction.src2
+            intermediate["type"] = "register"
+            intermediate["id"] = self.decoded_instruction.dest
+        elif opcode == "mul": 
+            intermediate["value"] = self.decoded_instruction.src1 * self.decoded_instruction.src2
+            intermediate["type"] = "register"
+            intermediate["id"] = self.decoded_instruction.dest
+        elif opcode == "li":
+            intermediate["value"] = self.decoded_instruction.src1
+            intermediate["type"] = "register"
+            intermediate["id"] = self.decoded_instruction.dest
+        elif opcode == "la": 
+            intermediate["value"] = self.decoded_instruction.src1
+            intermediate["type"] = "register"
+            intermediate["id"] = self.decoded_instruction.dest
+        elif opcode == "lw":
+            intermediate["value"] = self.memory[self.decoded_instruction.src1]
+            intermediate["type"] = "register"
+            intermediate["id"] = self.decoded_instruction.dest
+        elif opcode == "sw":
+            intermediate["value"] = self.decoded_instruction.dest
+            intermediate["type"] = "memory"
+            intermediate["id"] = self.decoded_instruction.src1
+        elif opcode == "addi":
+            intermediate["value"] = self.registers[self.decoded_instruction.src1] + self.decoded_instruction.src2
+            intermediate["type"] = "register"
+            intermediate["id"] = self.decoded_instruction.dest
+        elif opcode == "ecall":
+            intermediate["value"] = None 
+            intermediate["type"] = "sys"
+            intermediate["id"] = None 
+        elif opcode == "j": 
+            intermediate["type"] = "pc"
+            intermediate["value"] = self.decoded_instruction.operands[0]
+        elif opcode == "beq":
+            if self.registers[self.decoded_instruction.src1] == self.registers[self.decoded_instruction.src2]:
+                intermediate["type"] = "pc"
+                intermediate["value"] = self.decoded_instruction.src3
+            else:
+                intermediate["type"] = "pc"
+                intermediate["value"] = self.pc + 1
+        elif opcode == "bge": 
+            if self.registers[self.decoded_instruction.src1] >= self.registers[self.decoded_instruction.src2]:
+                intermediate["type"] = "pc"
+                intermediate["value"] = self.decoded_instruction.src3
+            else: 
+                intermediate["type"] = "pc"
+                intermediate["value"] = self.pc + 1
+        self.deallocate(intermediate)
+
+class LSU: 
+    def __init__(self): 
+        self.busy = False
+        self.load_cycle_time = 2
+        self.store_cycle_time = 2
+        self.cycles_executed = 0
+        self.decoded_instruction = None
+    
+    def allocate(self, decoded_instruction):
+        self.busy = True
+        self.decoded_instruction = decoded_instruction
+    
+    def deallocate(self, result):
+        self.busy = False
+        self.cycles_executed = 0
+        return result
+    
+    def cycle(self): 
+        if not self.busy:
+            return 
+        self.cycles_executed += 1
+        if self.cycles_executed < self.load_cycle_time:
+            return 
+        intermediate = dict()
+        opcode = self.decoded_instruction.opcode
+        if opcode == "lw":
+            intermediate["value"] = self.memory[self.decoded_instruction.src1]
+            intermediate["type"] = "register"
+            intermediate["id"] = self.decoded_instruction.dest
+        elif opcode == "sw":
+            intermediate["value"] = self.decoded_instruction.dest
+            intermediate["type"] = "memory"
+            intermediate["id"] = self.decoded_instruction.src1
+        self.deallocate(intermediate)
+
+class DispatchUnit: 
+    def __init__(self, decode_buffer): 
+        self.decode_buffer = decode_buffer
+        self.busy = False
+
+class IssueUnit: 
+    def __init__(self, issue_queue): 
+        self.issue_queue = issue_queue
+        self.busy = False
+    
+    def cycle(self): 
+        self.busy = True
+        if self.issue_queue.is_full():
+            return
+        self.busy = False
+       
 class PipelinedProcessor(CPU):
     def __init__(self, config):
         super().__init__(config) 
         self.fetch_buffer = FetchBuffer(size=config["fetch_buffer_size"])
         self.decode_buffer = DecodeBuffer(size=config["decode_buffer_size"])
+        self.reorder_buffer = ReorderBuffer(size=config["reorder_buffer_size"])
         self.branch_predictor = BranchPredictor(type=config["branch_predictor_type"])
         self.branch_instructions = ["beq", "bne", "blt", "bge"]
         self.jump_instructions = ["j", "jr", "jal", "jalr", "ret"]
         self.alu_instructions = ["add", "sub", "mul", "div", "addi", "subi", "muli", "divi"]
         self.load_store_instructions = ["lw", "sw", "li", "la"]
         print(self.registers)
+
+        self.FetchUnit = FetchUnit(self.fetch_buffer, config["n_instruction_fetch_cycle"])
+        self.DecodeUnit = DecodeUnit(self.decode_buffer, config["n_instruction_decode_cycle"])
+        self.ExecuteUnit = [ExecuteUnit(self.execute_buffer, config["n_instruction_execute_cycle"])]
 
     def fetch(self): 
         if not self.program: 
@@ -101,53 +256,49 @@ class PipelinedProcessor(CPU):
 
     def decode(self): 
         # implement decode and rename 
-
         def rename(instruction): 
             if instruction.dest:
-                instruction.dest = self.registers.RAT.table[instruction.dest] if instruction.dest in self.registers.RAT.table else instruction.dest
+                instruction.dest = self.registers.rename(instruction.dest, type ="dest")
             if instruction.src1: 
-                instruction.src1 = self.registers.RAT.table[instruction.src1] if instruction.src1 in self.registers.RAT.table else instruction.src1
+                instruction.src1 = self.registers.rename(instruction.src1, type="src")
             if instruction.src2: 
-                instruction.src2 = self.registers.RAT.table[instruction.src2] if instruction.src2 in self.registers.RAT.table else instruction.src2
+                instruction.src2 = self.registers.rename(instruction.src2, type="src")
             if instruction.src3:
-                instruction.src3 = self.registers.RAT.table[instruction.src3] if instruction.src3 in self.registers.RAT.table else instruction.src3
+                instruction.src3 = self.registers.rename(instruction.src3, type="src")
             return instruction
          
         for i in range(self.config["n_instruction_decode_cycle"]): 
-            if self.decode_buffer.is_full(): 
+            if self.decode_buffer.is_full() or self.reorder_buffer.is_full(): 
                 break
             if self.fetch_buffer.is_empty():
                 break
             instruction = self.fetch_buffer.dequeue()
             opcode = instruction.opcode
             operands = instruction.operands
-            if instruction not in self.branch_instructions and instruction not in self.jump_instructions: 
+            if opcode not in self.branch_instructions and opcode not in self.jump_instructions: 
                 dest = operands[0]
                 src1 = operands[1] if len(operands) >= 2 else None 
                 src2 = operands[2] if len(operands) >= 3 else None 
                 src3 = operands[3] if len(operands) >= 4 else None
-                decoded_instruction = DecodedInstruction(instruction=instruction, dest=dest, src1=src1, src2=src2, src3=src3)
-                print(src1, src2, src3)
+                decoded_instruction = decodedInstruction(instruction=instruction, dest=dest, src1=src1, src2=src2, src3=src3)
             else: 
                 dest = None 
                 src1 = operands[0] if len(operands) >= 1 else None
                 src2 = operands[1] if len(operands) >= 2 else None
                 src3 = operands[2] if len(operands) >= 3 else None
-                decoded_instruction = DecodedInstruction(instruction=instruction, dest=dest, src1=src1, src2=src2, src3=src3)
+                decoded_instruction = decodedInstruction(instruction=instruction, dest=dest, src1=src1, src2=src2, src3=src3)
 
-
-            instruction = rename(decoded_instruction)
-            print(instruction)
-
-                # if len()
+            decoded_instruction = rename(decoded_instruction)
             if opcode in self.alu_instructions:
-                instruction.micro_op = "ALU"
+                decoded_instruction.micro_op = "ALU"
             elif opcode in self.load_store_instructions:
-                instruction.micro_op = "LSU"
+                decoded_instruction.micro_op = "LSU"
             elif opcode in self.branch_instructions or self.jump_instructions:
-                instruction.micro_op = "BRANCH UNIT"
-            
-       
+                decoded_instruction.micro_op = "BRANCH UNIT"
+            self.decode_buffer.enqueue(decoded_instruction)
+
+            reorder_buffer_entry = ReorderBufferEntry(instruction=decoded_instruction)
+            self.reorder_buffer.enqueue(decoded_instruction)
 
     def dispatch(self): 
         
@@ -182,7 +333,6 @@ class PipelinedProcessor(CPU):
 if __name__ == "__main__": 
     cpu = PipelinedProcessor(config)
     cpu.run(os.path.join(os.getcwd(), "programs\\vec_addition.s"))
-    print(cpu.fetch_buffer)
 
-    for instruction in cpu.fetch_buffer: 
+    for instruction in cpu.decode_buffer: 
         print(instruction)
