@@ -73,9 +73,50 @@ class DecodeUnit:
             return
         self.busy = False 
 
+class BranchUnit: 
+    def __init__(self): 
+        self.branch_instruction = None 
+        self.cycles_executed = 0
+        self.busy = False
+    def allocate(self, branch_instruction): 
+        self.busy = True
+        self.branch_instruction = branch_instruction
+    def deallocate(self, result): 
+        self.busy = False
+        self.cycles_executed = 0
+        return result
+    def cycle(self): 
+        if not self.busy:
+            return 
+        self.cycles_executed += 1
+        if self.cycles_executed < self.branch_instruction.n_cycles_to_execute:
+            return 
+        intermediate = dict()
+        opcode = self.branch_instruction.opcode
+
+        if opcode == "j": 
+            intermediate["type"] = "pc"
+            intermediate["value"] = self.branch_instruction.operands[0]
+        elif opcode == "beq":
+            if self.registers[self.branch_instruction.src1] == self.registers[self.branch_instruction.src2]:
+                intermediate["type"] = "pc"
+                intermediate["value"] = self.branch_instruction.src3
+            else:
+                intermediate["type"] = "pc"
+                intermediate["value"] = self.pc + 1
+        elif opcode == "bge": 
+            if self.registers[self.branch_instruction.src1] >= self.registers[self.branch_instruction.src2]:
+                intermediate["type"] = "pc"
+                intermediate["value"] = self.branch_instruction.src3
+            else: 
+                intermediate["type"] = "pc"
+                intermediate["value"] = self.pc + 1
+        
+        self.busy = False
+
 class ALU:
-    def __init__(self, decoded_instruction): 
-        self.decoded_instruction = decoded_instruction
+    def __init__(self): 
+        self.decoded_instruction = None
         self.cycles_executed = 0
         self.busy = False
     def allocate(self, decoded_instruction): 
@@ -126,23 +167,7 @@ class ALU:
             intermediate["value"] = None 
             intermediate["type"] = "sys"
             intermediate["id"] = None 
-        elif opcode == "j": 
-            intermediate["type"] = "pc"
-            intermediate["value"] = self.decoded_instruction.operands[0]
-        elif opcode == "beq":
-            if self.registers[self.decoded_instruction.src1] == self.registers[self.decoded_instruction.src2]:
-                intermediate["type"] = "pc"
-                intermediate["value"] = self.decoded_instruction.src3
-            else:
-                intermediate["type"] = "pc"
-                intermediate["value"] = self.pc + 1
-        elif opcode == "bge": 
-            if self.registers[self.decoded_instruction.src1] >= self.registers[self.decoded_instruction.src2]:
-                intermediate["type"] = "pc"
-                intermediate["value"] = self.decoded_instruction.src3
-            else: 
-                intermediate["type"] = "pc"
-                intermediate["value"] = self.pc + 1
+
         self.deallocate(intermediate)
 
 class LSU: 
@@ -181,8 +206,32 @@ class LSU:
         self.deallocate(intermediate)
 
 class DispatchUnit: 
-    def __init__(self, decode_buffer): 
+    def __init__(self, decode_buffer, alu_issue_queue, lsu_issue_queue, branch_issue_queue): 
         self.decode_buffer = decode_buffer
+        self.alu_issue_queue = alu_issue_queue
+        self.lsu_issue_queue = lsu_issue_queue
+        self.branch_issue_queue = branch_issue_queue
+        self.busy = False
+    
+    def cycle(self):
+        self.busy = True
+        if self.decode_buffer.is_empty():
+            return
+        
+        for decoded_instruction in self.decode_buffer: 
+            micro_op = decoded_instruction.micro_op
+            if micro_op == "ALU":
+                if self.alu_issue_queue.is_full():
+                    continue
+                self.alu_issue_queue.enqueue(decoded_instruction)
+            elif micro_op == "LSU":
+                if self.lsu_issue_queue.is_full():
+                    continue
+                self.lsu_issue_queue.enqueue(decoded_instruction)
+            elif micro_op == "BRANCH":
+                if self.branch_issue_queue.is_full():
+                    continue
+                self.branch_issue_queue.enqueue(decoded_instruction)
         self.busy = False
 
 class IssueUnit: 
@@ -202,6 +251,8 @@ class PipelinedProcessor(CPU):
         self.fetch_buffer = FetchBuffer(size=config["fetch_buffer_size"])
         self.decode_buffer = DecodeBuffer(size=config["decode_buffer_size"])
         self.reorder_buffer = ReorderBuffer(reorder_buffer_size=config["reorder_buffer_size"],register_file=self.registers)
+        self.branch_target_buffer = {}
+        self.branch_history_buffer = {}
         self.branch_predictor = BranchPredictor(type=config["branch_predictor_type"])
         self.branch_instructions = ["beq", "bne", "blt", "bge"]
         self.jump_instructions = ["j", "jr", "jal", "jalr", "ret"]
@@ -297,8 +348,8 @@ class PipelinedProcessor(CPU):
             elif opcode in self.load_store_instructions:
                 decoded_instruction.micro_op = "LSU"
             elif opcode in self.branch_instructions or self.jump_instructions:
-                decoded_instruction.micro_op = "BRANCH UNIT"
-            print(stale_physical_register)
+                # decoded_instruction.micro_op = "BRANCH UNIT"
+                decoded_instruction.micro_op = "BRANCH"
             type = decoded_instruction.micro_op
             pc = decoded_instruction.pc
             dest = decoded_instruction.dest
@@ -307,7 +358,10 @@ class PipelinedProcessor(CPU):
             self.decode_buffer.enqueue(decoded_instruction)
             self.reorder_buffer.enqueue(pc, type, dest, value, stale_physical_register)
 
+            #branch target for unconditionals is computed in decode stage
+            #branch target for conditionals is computed in execute stage
     def dispatch(self): 
+        
         pass
     def issue(self): 
         pass
