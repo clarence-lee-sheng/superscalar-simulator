@@ -5,7 +5,7 @@ from hardware.Buffer import FetchBuffer, DecodeBuffer
 from hardware.ReorderBuffer import ReorderBuffer, ReorderBufferEntry
 from hardware.BranchPredictor import BranchPredictor
 from software.Assembler import Assembler 
-from software.Instruction import decodedInstruction
+from software.Instruction import DecodedInstruction
 import re
 import os
 
@@ -201,7 +201,7 @@ class PipelinedProcessor(CPU):
         super().__init__(config) 
         self.fetch_buffer = FetchBuffer(size=config["fetch_buffer_size"])
         self.decode_buffer = DecodeBuffer(size=config["decode_buffer_size"])
-        self.reorder_buffer = ReorderBuffer(size=config["reorder_buffer_size"])
+        self.reorder_buffer = ReorderBuffer(reorder_buffer_size=config["reorder_buffer_size"],register_file=self.registers)
         self.branch_predictor = BranchPredictor(type=config["branch_predictor_type"])
         self.branch_instructions = ["beq", "bne", "blt", "bge"]
         self.jump_instructions = ["j", "jr", "jal", "jalr", "ret"]
@@ -210,8 +210,8 @@ class PipelinedProcessor(CPU):
         print(self.registers)
 
         self.FetchUnit = FetchUnit(self.fetch_buffer, config["n_instruction_fetch_cycle"])
-        self.DecodeUnit = DecodeUnit(self.decode_buffer, config["n_instruction_decode_cycle"])
-        self.ExecuteUnit = [ExecuteUnit(self.execute_buffer, config["n_instruction_execute_cycle"])]
+        self.DecodeUnit = DecodeUnit(self.decode_buffer, self.reorder_buffer, config["n_instruction_decode_cycle"])
+        # self.ExecuteUnit = [ExecuteUnit(self.execute_buffer, config["n_instruction_execute_cycle"])]
 
     def fetch(self): 
         if not self.program: 
@@ -248,7 +248,6 @@ class PipelinedProcessor(CPU):
                         self.pc = branch_pc 
                     else: 
                         self.pc += 1 
-
                 else:     
                     self.pc += 1
 
@@ -257,18 +256,22 @@ class PipelinedProcessor(CPU):
     def decode(self): 
         # implement decode and rename 
         def rename(instruction): 
+            stale_physical_register = None 
             if instruction.dest:
-                instruction.dest = self.registers.rename(instruction.dest, type ="dest")
+                instruction.dest, stale_physical_register = self.registers.rename(instruction.dest, type ="dest")
             if instruction.src1: 
                 instruction.src1 = self.registers.rename(instruction.src1, type="src")
             if instruction.src2: 
                 instruction.src2 = self.registers.rename(instruction.src2, type="src")
             if instruction.src3:
                 instruction.src3 = self.registers.rename(instruction.src3, type="src")
-            return instruction
-         
+            return instruction, stale_physical_register
+        
+        print(self.config["n_instruction_decode_cycle"])
         for i in range(self.config["n_instruction_decode_cycle"]): 
-            if self.decode_buffer.is_full() or self.reorder_buffer.is_full(): 
+            print(self.decode_buffer.is_full(),self.reorder_buffer.is_full() , not self.registers.RAT.has_free())
+            if self.decode_buffer.is_full() or self.reorder_buffer.is_full() or not self.registers.RAT.has_free(): 
+                print("decode stalling")
                 break
             if self.fetch_buffer.is_empty():
                 break
@@ -280,28 +283,31 @@ class PipelinedProcessor(CPU):
                 src1 = operands[1] if len(operands) >= 2 else None 
                 src2 = operands[2] if len(operands) >= 3 else None 
                 src3 = operands[3] if len(operands) >= 4 else None
-                decoded_instruction = decodedInstruction(instruction=instruction, dest=dest, src1=src1, src2=src2, src3=src3)
+                decoded_instruction = DecodedInstruction(instruction=instruction, dest=dest, src1=src1, src2=src2, src3=src3)
             else: 
                 dest = None 
                 src1 = operands[0] if len(operands) >= 1 else None
                 src2 = operands[1] if len(operands) >= 2 else None
                 src3 = operands[2] if len(operands) >= 3 else None
-                decoded_instruction = decodedInstruction(instruction=instruction, dest=dest, src1=src1, src2=src2, src3=src3)
+                decoded_instruction = DecodedInstruction(instruction=instruction, dest=dest, src1=src1, src2=src2, src3=src3)
 
-            decoded_instruction = rename(decoded_instruction)
+            decoded_instruction, stale_physical_register = rename(decoded_instruction)
             if opcode in self.alu_instructions:
                 decoded_instruction.micro_op = "ALU"
             elif opcode in self.load_store_instructions:
                 decoded_instruction.micro_op = "LSU"
             elif opcode in self.branch_instructions or self.jump_instructions:
                 decoded_instruction.micro_op = "BRANCH UNIT"
-            self.decode_buffer.enqueue(decoded_instruction)
+            print(stale_physical_register)
+            type = decoded_instruction.micro_op
+            pc = decoded_instruction.pc
+            dest = decoded_instruction.dest
+            value = None 
 
-            reorder_buffer_entry = ReorderBufferEntry(instruction=decoded_instruction)
-            self.reorder_buffer.enqueue(decoded_instruction)
+            self.decode_buffer.enqueue(decoded_instruction)
+            self.reorder_buffer.enqueue(pc, type, dest, value, stale_physical_register)
 
     def dispatch(self): 
-        
         pass
     def issue(self): 
         pass
@@ -333,6 +339,10 @@ class PipelinedProcessor(CPU):
 if __name__ == "__main__": 
     cpu = PipelinedProcessor(config)
     cpu.run(os.path.join(os.getcwd(), "programs\\vec_addition.s"))
+    print(cpu.fetch_buffer)
+    print(cpu.decode_buffer)
+    print(cpu.reorder_buffer)
+    print(cpu.registers.RAT.free)
 
     for instruction in cpu.decode_buffer: 
         print(instruction)
