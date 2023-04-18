@@ -4,6 +4,7 @@ from hardware.CPU import CPU
 from hardware.Buffer import FetchBuffer, DecodeBuffer
 from hardware.ReorderBuffer import ReorderBuffer, ReorderBufferEntry
 from hardware.BranchPredictor import BranchPredictor
+from hardware.IssueQueue import IssueQueue, IssueSlot
 from software.Assembler import Assembler 
 from software.Instruction import DecodedInstruction
 import re
@@ -11,6 +12,8 @@ import os
 
 # questions 
 # Must instructions be dispatched to the issue queue in order 
+
+
 
 
 reg_size = 32 
@@ -25,6 +28,9 @@ config = {
     "fetch_buffer_size": 10,
     "decode_buffer_size": 100,
     "reorder_buffer_size": 128,
+    "mem_issue_queue_size": 32, 
+    "alu_issue_queue_size": 32,
+    "branch_issue_queue_size": 32,
     "n_instruction_fetch_cycle": 8, 
     "n_instruction_decode_cycle": 8,
     "lsq_buffer_size": 4,
@@ -34,6 +40,11 @@ config = {
     "register_file_params": {
         "n_physical_registers": 128,
     }, 
+    "execution_units": {
+        "n_alus": 3,
+        "n_lsus": 2,
+        "n_branch_units": 1
+    },
     "branch_predictor_type": "static" 
 }
 
@@ -49,15 +60,52 @@ config = {
 
 # if branch, 
 class FetchUnit: 
-    def __init__(self, fetch_buffer, n_instruction_fetch_cycle): 
+    def __init__(self, fetch_buffer, n_instruction_fetch_cycle,branch_predictor, statistics={}, program=None): 
+        self.program = program
         self.fetch_buffer = fetch_buffer
         self.n_instruction_fetch_cycle = n_instruction_fetch_cycle
         self.pc = 0
+        self.statistics = statistics
+        self.branch_predictor = branch_predictor
     
     def cycle(self): 
         self.busy = True 
         if self.fetch_buffer.is_full():
             return
+        
+        for i in range(self.n_instruction_fetch_cycle):
+            if self.fetch_buffer.is_full():
+                break
+            if self.pc >= len(self.program): 
+                break
+            instruction = self.program[self.pc]
+            self.fetch_buffer.enqueue(instruction)
+
+            self.statistics["instructions_count"] += 1
+            opcode = instruction.opcode
+            if opcode == "lw" or opcode == "li" or opcode == "la":
+                self.statistics["load_count"] += 1
+            if opcode == "sw":
+                self.statistics["store_count"] += 1
+            if opcode == "beq" or opcode == "bne" or opcode == "bge" or opcode == "bgt" or opcode == "ble" or opcode == "blt":
+                self.statistics["branch_count"] += 1
+            if opcode in ["beq", "bge", "bgt", "ble", "blt"]: 
+                branch_pc = instruction.operands[2]
+                to_branch = self.branch_predictor.predict(branch_pc, self.pc)
+                if to_branch: 
+                    self.pc = branch_pc 
+                else: 
+                    self.pc += 1 
+            elif opcode in ["j"]: 
+                branch_pc = instruction.operands[0]
+                to_branch = self.branch_predictor.predict(branch_pc, self.pc)
+                if to_branch: 
+                    self.pc = branch_pc 
+                else: 
+                    self.pc += 1 
+            else:     
+                self.pc += 1
+
         self.busy = False
         
 class DecodeUnit: 
@@ -206,17 +254,37 @@ class LSU:
         self.deallocate(intermediate)
 
 class DispatchUnit: 
-    def __init__(self, decode_buffer, alu_issue_queue, lsu_issue_queue, branch_issue_queue): 
+    def __init__(self, decode_buffer, alu_issue_queue, lsu_issue_queue, branch_issue_queue, dispatch_width=4): 
         self.decode_buffer = decode_buffer
         self.alu_issue_queue = alu_issue_queue
         self.lsu_issue_queue = lsu_issue_queue
         self.branch_issue_queue = branch_issue_queue
         self.busy = False
+        self.dispatch_width = dispatch_width
     
     def cycle(self):
         self.busy = True
         if self.decode_buffer.is_empty():
             return
+        
+        for i in range(self.dispatch_width): 
+            if self.decode_buffer.is_empty():
+                break
+
+            decoded_instruction = self.decode_buffer[0]
+            micro_op, dest, src1, src2, = self.decode_buffer[0].micro_op
+            if micro_op == "ALU":
+                if self.alu_issue_queue.is_full():
+                    continue
+                self.alu_issue_queue.enqueue(decoded_instruction)
+            elif micro_op == "LSU":
+                if self.lsu_issue_queue.is_full():
+                    continue
+                self.lsu_issue_queue.enqueue(decoded_instruction)
+            elif micro_op == "BRANCH":
+                if self.branch_issue_queue.is_full():
+                    continue
+                self.branch_issue_queue.enqueue(decoded_instruction)
         
         for decoded_instruction in self.decode_buffer: 
             micro_op = decoded_instruction.micro_op
@@ -251,6 +319,10 @@ class PipelinedProcessor(CPU):
         self.fetch_buffer = FetchBuffer(size=config["fetch_buffer_size"])
         self.decode_buffer = DecodeBuffer(size=config["decode_buffer_size"])
         self.reorder_buffer = ReorderBuffer(reorder_buffer_size=config["reorder_buffer_size"],register_file=self.registers)
+
+        self.alu_issue_queue = IssueQueue(size=config["alu_issue_queue_size"], register_file=self.registers, execution_units=[ALU() for i in range(config["execution_units"]["n_alus"])])
+        self.lsu_issue_queue = IssueQueue(size=config["mem_issue_queue_size"], register_file=self.registers, execution_units=[LSU() for i in range(config["execution_units"]["n_lsus"])])
+        self.branch_issue_queue = IssueQueue(size=config["branch_issue_queue_size"], register_file=self.registers, execution_units=[BranchUnit() for i in range(config["execution_units"]["n_branch_units"])])
         self.branch_target_buffer = {}
         self.branch_history_buffer = {}
         self.branch_predictor = BranchPredictor(type=config["branch_predictor_type"])
@@ -260,7 +332,12 @@ class PipelinedProcessor(CPU):
         self.load_store_instructions = ["lw", "sw", "li", "la"]
         print(self.registers)
 
-        self.FetchUnit = FetchUnit(self.fetch_buffer, config["n_instruction_fetch_cycle"])
+        self.FetchUnit = FetchUnit(
+            fetch_buffer =self.fetch_buffer, 
+            n_instruction_fetch_cycle = config["n_instruction_fetch_cycle"], 
+            branch_predictor = self.branch_predictor,
+            statistics = self.statistics
+        )
         self.DecodeUnit = DecodeUnit(self.decode_buffer, self.reorder_buffer, config["n_instruction_decode_cycle"])
         # self.ExecuteUnit = [ExecuteUnit(self.execute_buffer, config["n_instruction_execute_cycle"])]
 
@@ -268,39 +345,43 @@ class PipelinedProcessor(CPU):
         if not self.program: 
             print("no instructions to fetch as there is no program")
             return
-        else: 
-            for i in range(self.config["n_instruction_fetch_cycle"]):
-                if self.fetch_buffer.is_full():
-                    break
-                if self.pc >= len(self.program): 
-                    break
-                instruction = self.program[self.pc]
-                self.fetch_buffer.enqueue(instruction)
+        self.FetchUnit.cycle()
+        # if not self.program: 
+        #     print("no instructions to fetch as there is no program")
+        #     return
+        # else: 
+        #     for i in range(self.config["n_instruction_fetch_cycle"]):
+        #         if self.fetch_buffer.is_full():
+        #             break
+        #         if self.pc >= len(self.program): 
+        #             break
+        #         instruction = self.program[self.pc]
+        #         self.fetch_buffer.enqueue(instruction)
     
-                self.statistics["instructions_count"] += 1
-                opcode = instruction.opcode
-                if opcode == "lw" or opcode == "li" or opcode == "la":
-                    self.statistics["load_count"] += 1
-                if opcode == "sw":
-                    self.statistics["store_count"] += 1
-                if opcode == "beq" or opcode == "bne" or opcode == "bge" or opcode == "bgt" or opcode == "ble" or opcode == "blt":
-                    self.statistics["branch_count"] += 1
-                if opcode in ["beq", "bge", "bgt", "ble", "blt"]: 
-                    branch_pc = instruction.operands[2]
-                    to_branch = self.branch_predictor.predict(branch_pc, self.pc)
-                    if to_branch: 
-                        self.pc = branch_pc 
-                    else: 
-                        self.pc += 1 
-                elif opcode in ["j"]: 
-                    branch_pc = instruction.operands[0]
-                    to_branch = self.branch_predictor.predict(branch_pc, self.pc)
-                    if to_branch: 
-                        self.pc = branch_pc 
-                    else: 
-                        self.pc += 1 
-                else:     
-                    self.pc += 1
+        #         self.statistics["instructions_count"] += 1
+        #         opcode = instruction.opcode
+        #         if opcode == "lw" or opcode == "li" or opcode == "la":
+        #             self.statistics["load_count"] += 1
+        #         if opcode == "sw":
+        #             self.statistics["store_count"] += 1
+        #         if opcode == "beq" or opcode == "bne" or opcode == "bge" or opcode == "bgt" or opcode == "ble" or opcode == "blt":
+        #             self.statistics["branch_count"] += 1
+        #         if opcode in ["beq", "bge", "bgt", "ble", "blt"]: 
+        #             branch_pc = instruction.operands[2]
+        #             to_branch = self.branch_predictor.predict(branch_pc, self.pc)
+        #             if to_branch: 
+        #                 self.pc = branch_pc 
+        #             else: 
+        #                 self.pc += 1 
+        #         elif opcode in ["j"]: 
+        #             branch_pc = instruction.operands[0]
+        #             to_branch = self.branch_predictor.predict(branch_pc, self.pc)
+        #             if to_branch: 
+        #                 self.pc = branch_pc 
+        #             else: 
+        #                 self.pc += 1 
+        #         else:     
+        #             self.pc += 1
 
     #rename the registers
 
@@ -373,10 +454,11 @@ class PipelinedProcessor(CPU):
         pass
     def run(self, program): 
         self.program = self.assembler.assemble(program, self)
+        self.FetchUnit.program = self.program
         while self.statistics["cycles"] < 1000: 
             self.statistics["cycles"] += 5
-            instruction = self.fetch()
-            decoded = self.decode()
+            self.fetch()
+            self.decode()
             # decoded = self.decode(instruction) 
             # intermediate = self.execute(decoded)
             # self.memory_access(intermediate)
