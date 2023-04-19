@@ -184,10 +184,11 @@ class DecodeUnit:
         self.busy = False 
 
 class BranchUnit: 
-    def __init__(self): 
+    def __init__(self, bypass_network): 
         self.branch_instruction = None 
         self.cycles_executed = 0
         self.busy = False
+        self.bypass_network = bypass_network
     def allocate(self, branch_instruction): 
         self.busy = True
         self.branch_instruction = branch_instruction
@@ -225,10 +226,12 @@ class BranchUnit:
         self.busy = False
 
 class ALU:
-    def __init__(self): 
+    def __init__(self, bypass_network): 
         self.decoded_instruction = None
         self.cycles_executed = 0
         self.busy = False
+        self.bypass_network = bypass_network
+
     def allocate(self, decoded_instruction): 
         self.busy = True
         self.decoded_instruction = decoded_instruction
@@ -281,12 +284,14 @@ class ALU:
         self.deallocate(intermediate)
 
 class LSU: 
-    def __init__(self): 
+    def __init__(self, memory, bypass_network): 
         self.busy = False
         self.load_cycle_time = 2
         self.store_cycle_time = 2
         self.cycles_executed = 0
         self.decoded_instruction = None
+        self.memory = memory
+        self.bypass_network = bypass_network
     
     def allocate(self, decoded_instruction):
         self.busy = True
@@ -306,6 +311,7 @@ class LSU:
         intermediate = dict()
         opcode = self.decoded_instruction.opcode
         if opcode == "lw":
+            # compute the address
             intermediate["value"] = self.memory[self.decoded_instruction.src1]
             intermediate["type"] = "register"
             intermediate["id"] = self.decoded_instruction.dest
@@ -393,8 +399,9 @@ class PipelinedProcessor(CPU):
         self.fetch_buffer = FetchBuffer(size=config["fetch_buffer_size"])
         self.decode_buffer = DecodeBuffer(size=config["decode_buffer_size"])
         self.reorder_buffer = ReorderBuffer(reorder_buffer_size=config["reorder_buffer_size"],register_file=self.registers)
-        self.alu_execution_units = [ALU() for i in range(config["execution_units"]["n_alus"])]
-        self.mem_execution_units = [LSU() for i in range(config["execution_units"]["n_lsus"])]
+        self.bypass_network = {}
+        self.alu_execution_units = [ALU(bypass_network=self.bypass_network) for i in range(config["execution_units"]["n_alus"])]
+        self.mem_execution_units = [LSU(self.memory) for i in range(config["execution_units"]["n_lsus"])]
         self.branch_execution_units = [BranchUnit() for i in range(config["execution_units"]["n_branch_units"])]
 
         self.alu_issue_queue = IssueQueue(size=config["alu_issue_queue_size"], register_file=self.registers, execution_units=self.alu_execution_units)
@@ -472,6 +479,18 @@ class PipelinedProcessor(CPU):
             self.decode()
             self.dispatch()
             self.issue()
+            self.execute()
+            self.memory_access() 
+            self.write_back()
+
+            # TODO 
+            # Broadcasting 
+            # load store 
+            # figure out how to pass data to memory and writeback stages 
+            # write code for load store queue 
+            # write code for the writeback stage 
+
+
             # decoded = self.decode(instruction) 
             # intermediate = self.execute(decoded)
             # self.memory_access(intermediate)
