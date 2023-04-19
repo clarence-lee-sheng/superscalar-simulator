@@ -283,6 +283,43 @@ class ALU:
 
         self.deallocate(intermediate)
 
+class AGU: 
+    def __init__(self, memory, bypass_network): 
+        self.busy = False
+        self.load_cycle_time = 2
+        self.store_cycle_time = 2
+        self.cycles_executed = 0
+        self.decoded_instruction = None
+        self.memory = memory
+        self.bypass_network = bypass_network
+    def allocate(self, decoded_instruction):
+        self.busy = True
+        self.decoded_instruction = decoded_instruction
+    def deallocate(self, result):
+        self.busy = False
+        self.cycles_executed = 0
+        return result
+    def cycle(self):
+        if not self.busy:
+            return 
+        self.cycles_executed += 1
+        if self.cycles_executed < self.load_cycle_time:
+            return 
+        intermediate = dict()
+        opcode = self.decoded_instruction.opcode
+        if opcode == "lw":
+            # compute the address
+            intermediate["value"] = self.decoded_instruction.src1 + self.decoded_instruction.src2
+            intermediate["type"] = "memory"
+            intermediate["id"] = self.decoded_instruction.dest
+        elif opcode == "sw":
+            # compute the address
+            intermediate["value"] = self.decoded_instruction.src1 + self.decoded_instruction.src2
+            intermediate["type"] = "memory"
+            intermediate["id"] = self.decoded_instruction.dest
+        self.deallocate(intermediate)
+        
+
 class LSU: 
     def __init__(self, memory, bypass_network): 
         self.busy = False
@@ -401,8 +438,8 @@ class PipelinedProcessor(CPU):
         self.reorder_buffer = ReorderBuffer(reorder_buffer_size=config["reorder_buffer_size"],register_file=self.registers)
         self.bypass_network = {}
         self.alu_execution_units = [ALU(bypass_network=self.bypass_network) for i in range(config["execution_units"]["n_alus"])]
-        self.mem_execution_units = [LSU(self.memory) for i in range(config["execution_units"]["n_lsus"])]
-        self.branch_execution_units = [BranchUnit() for i in range(config["execution_units"]["n_branch_units"])]
+        self.mem_execution_units = [LSU(memory = self.memory, bypass_network=self.bypass_network) for i in range(config["execution_units"]["n_lsus"])]
+        self.branch_execution_units = [BranchUnit(bypass_network=self.bypass_network) for i in range(config["execution_units"]["n_branch_units"])]
 
         self.alu_issue_queue = IssueQueue(size=config["alu_issue_queue_size"], register_file=self.registers, execution_units=self.alu_execution_units)
         self.mem_issue_queue = IssueQueue(size=config["mem_issue_queue_size"], register_file=self.registers, execution_units=self.mem_execution_units)
