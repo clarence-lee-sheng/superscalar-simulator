@@ -1,6 +1,7 @@
 class IssueSlot: 
-    def __init__(self, opcode, dest, src1, src1_ready, src2, src2_ready): 
+    def __init__(self, pc, opcode, dest, src1, src1_ready, src2, src2_ready): 
         # this entry is based on the issue slot according to the documentation here: https://docs.boom-core.org/en/latest/sections/issue-units.html 
+        self.pc = pc
         self.opcode = opcode
         self.dest = dest
         self.src1 = src1 
