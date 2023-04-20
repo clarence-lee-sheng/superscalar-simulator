@@ -283,11 +283,15 @@ class ALU:
 
         self.deallocate(intermediate)
 
+
+# Address generation unit 
+# 1. instruction come in 
+# 2. read the operands and compute the address 
+
 class AGU: 
     def __init__(self, memory, bypass_network): 
         self.busy = False
-        self.load_cycle_time = 2
-        self.store_cycle_time = 2
+        self.cycle_time = 1 
         self.cycles_executed = 0
         self.decoded_instruction = None
         self.memory = memory
@@ -303,12 +307,17 @@ class AGU:
         if not self.busy:
             return 
         self.cycles_executed += 1
-        if self.cycles_executed < self.load_cycle_time:
+        if self.cycles_executed < self.cycle_time:
             return 
         intermediate = dict()
         opcode = self.decoded_instruction.opcode
+        if opcode == "li": 
+            intermediate["value"] = self.decoded_instruction.src1
+            intermediate["type"] = "register"
+            intermediate["id"] = self.decoded_instruction.dest
         if opcode == "lw":
             # compute the address
+            
             intermediate["value"] = self.decoded_instruction.src1 + self.decoded_instruction.src2
             intermediate["type"] = "memory"
             intermediate["id"] = self.decoded_instruction.dest
@@ -317,8 +326,21 @@ class AGU:
             intermediate["value"] = self.decoded_instruction.src1 + self.decoded_instruction.src2
             intermediate["type"] = "memory"
             intermediate["id"] = self.decoded_instruction.dest
+        else: 
+            raise Exception("Invalid opcode for AGU", opcode)
         self.deallocate(intermediate)
-        
+
+class LSU_entry: 
+    def __init__(self, pc, valid, addr, data): 
+        self.dest = None
+        self.valid = valid
+        self.addr = addr
+        self.data = data
+        self.pc = pc
+    def __str__(self) -> str:
+        return f"pc: {self.pc}, valid: {self.valid}, addr: {self.addr}, data: {self.data}"
+        pass
+    
 
 class LSU: 
     def __init__(self, memory, bypass_network): 
@@ -438,7 +460,7 @@ class PipelinedProcessor(CPU):
         self.reorder_buffer = ReorderBuffer(reorder_buffer_size=config["reorder_buffer_size"],register_file=self.registers)
         self.bypass_network = {}
         self.alu_execution_units = [ALU(bypass_network=self.bypass_network) for i in range(config["execution_units"]["n_alus"])]
-        self.mem_execution_units = [LSU(memory = self.memory, bypass_network=self.bypass_network) for i in range(config["execution_units"]["n_lsus"])]
+        self.mem_execution_units = [AGU(memory = self.memory, bypass_network=self.bypass_network) for i in range(config["execution_units"]["n_lsus"])]
         self.branch_execution_units = [BranchUnit(bypass_network=self.bypass_network) for i in range(config["execution_units"]["n_branch_units"])]
 
         self.alu_issue_queue = IssueQueue(size=config["alu_issue_queue_size"], register_file=self.registers, execution_units=self.alu_execution_units)
@@ -479,6 +501,8 @@ class PipelinedProcessor(CPU):
             mem_issue_queue = self.mem_issue_queue,
             branch_issue_queue = self.branch_issue_queue
         )
+
+        self.LSU = LSU(memory = self.memory, bypass_network=self.bypass_network)
         # self.ExecuteUnit = [ExecuteUnit(self.execute_buffer, config["n_instruction_execute_cycle"])]
 
     def fetch(self): 
