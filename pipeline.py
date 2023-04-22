@@ -233,11 +233,14 @@ class BaseUnit:
         self.bypass_network[reg] = result
         for queue in self.issue_queues:
             for issue_slot in queue.queue: 
-                if issue_slot.src1 == reg: 
+                src1_reg, offset = extract_reg_and_offset(issue_slot.src1)
+                src2_reg, offset = extract_reg_and_offset(issue_slot.src2)
+
+                if src1_reg == reg:
                     print("broadcasting to ", issue_slot.uuid)
                     issue_slot.src1_ready = True
-                if issue_slot.src2 == reg:
-                    issue_slot.src2_ready = True 
+                if src2_reg == reg:
+                    issue_slot.src2_ready = True
                 if issue_slot.src1_ready and issue_slot.src2_ready: 
                     issue_slot.requesting = True
 
@@ -333,7 +336,6 @@ class AGU(BaseUnit):
             dest =  self.decoded_instruction.dest
             addr = None 
             entry_type = "load"
-            lsu_entry = LSU_entry(self.decoded_instruction.pc, valid, addr, data, entry_type, dest)
             reg = dest
             result = data
 
@@ -357,7 +359,14 @@ class AGU(BaseUnit):
                 addr = offset + self.register_file[reg]
             else: 
                 addr = offset + self.bypass_network[reg]
+            
+
+            dest = reg 
+            result = None 
+            valid = True
+            data = None
             entry_type = "load"
+    
 
             lsu_entry = LSU_entry(self.decoded_instruction.pc, valid, addr, data, entry_type, dest)
             self.LSU.enqueue(lsu_entry)
@@ -371,12 +380,18 @@ class AGU(BaseUnit):
                 addr = offset + self.bypass_network[reg]
             entry_type = "store"
 
+            dest = reg 
+            result = None 
+            valid = True
+            data = self.decoded_instruction.src2
+            entry_type = "load"
+
             lsu_entry = LSU_entry(self.decoded_instruction.pc, valid, addr, data, entry_type, dest)
-            self.LSU.enqueue(lsu_entry, )
+            self.LSU.enqueue(lsu_entry)
         else: 
             raise Exception("Invalid opcode for AGU", opcode)
         
-        if reg: 
+        if reg is not None and result is not None: 
             self.broadcast(reg, result)
         
         self.deallocate()
@@ -396,7 +411,8 @@ class LSU_entry:
     
 
 class LSU: 
-    def __init__(self, memory, bypass_network): 
+    def __init__(self, cpu, memory, bypass_network):
+        self.cpu = cpu 
         self.busy = False
         self.load_cycle_time = 2
         self.store_cycle_time = 2
@@ -404,14 +420,15 @@ class LSU:
         self.decoded_instruction = None
         self.memory = memory
         self.bypass_network = bypass_network
-        self.load_queue = list()
-        self.store_queue = list()
+        self.queue = list()
+        self.n_memory_ports = 4
 
     def enqueue(self, lsu_entry):
-        if lsu_entry.type == "load":
-            self.load_queue.append(lsu_entry)
-        elif lsu_entry.type == "store":
-            self.store_queue.append(lsu_entry)
+        self.queue.append(lsu_entry)
+        # if lsu_entry.type == "load":
+        #     self.load_queue.append(lsu_entry)
+        # elif lsu_entry.type == "store":
+        #     self.store_queue.append(lsu_entry)
         # self.lsu_queue.append(lsu_entry)
     
     def allocate(self, decoded_instruction):
@@ -425,24 +442,20 @@ class LSU:
         return 
     
     def cycle(self): 
-        if not self.busy:
-            return 
-        self.cycles_executed += 1
-        if self.cycles_executed < self.load_cycle_time:
-            return 
-        intermediate = dict()
-        opcode = self.decoded_instruction.opcode
-        if opcode == "lw":
-            # compute the address
-            intermediate["value"] = self.memory[self.decoded_instruction.src1]
-            intermediate["type"] = "register"
-            intermediate["id"] = self.decoded_instruction.dest
-        elif opcode == "sw":
-            intermediate["value"] = self.decoded_instruction.dest
-            intermediate["type"] = "memory"
-            intermediate["id"] = self.decoded_instruction.src1
-        self.deallocate(intermediate)
-
+        for i in range(self.n_memory_ports):
+            for entry in self.queue: 
+                if entry.valid: 
+                    if entry.type == "load": 
+                        entry.data = self.memory[entry.addr]
+                        self.bypass_network[entry.dest] = entry.data
+                        self.queue.remove(entry)
+                        break
+                    elif entry.type == "store": 
+                        self.memory[entry.addr] = entry.data
+                        self.queue.remove(entry)
+                        break
+            
+        
 class DispatchUnit: 
     def __init__(self, cpu, register_file, decode_buffer, alu_issue_queue, mem_issue_queue, branch_issue_queue, dispatch_width=4): 
         self.cpu = cpu
@@ -544,8 +557,11 @@ class PipelinedProcessor(CPU):
         self.bypass_network = {}
         self.branch_predictor = StaticBranchPredictor()
 
-        self.LSU = LSU(memory = self.memory, bypass_network=self.bypass_network)
-
+        self.LSU = LSU(
+            cpu = self,
+            memory = self.memory,
+            bypass_network = self.bypass_network
+        )
 
         self.alu_issue_queue = IssueQueue(size=config["alu_issue_queue_size"], register_file=self.registers)
         self.mem_issue_queue = IssueQueue(size=config["mem_issue_queue_size"], register_file=self.registers)
@@ -593,6 +609,8 @@ class PipelinedProcessor(CPU):
             mem_issue_queue = self.mem_issue_queue,
             branch_issue_queue = self.branch_issue_queue
         )
+
+        
 
         
         # self.ExecuteUnit = [ExecuteUnit(self.execute_buffer, config["n_instruction_execute_cycle"])]
@@ -690,18 +708,19 @@ class PipelinedProcessor(CPU):
     
 if __name__ == "__main__": 
     cpu = PipelinedProcessor(config)
-    cpu.run(os.path.join(os.getcwd(), "programs\\matrix_multiplication.s"))
+    cpu.run(os.path.join(os.getcwd(), "programs\\vec_addition.s"))
     # print(cpu.alu_issue_queue)
-    print(cpu.LSU.load_queue)
-    for entry in cpu.LSU.load_queue: 
-        print(entry)
+    # print(cpu.LSU.load_queue)
+    # for entry in cpu.LSU.load_queue: 
+    #     print(entry)
     # print(cpu.memory[:40])
     # print(cpu.reorder_buffer)
     print(cpu.fetch_buffer)
     print(cpu.bypass_network)
     print(cpu.branch_predictor.branch_target_buffer)
-    print(cpu.registers.register_file)
-    print(cpu.registers.busy_table)
+    print(cpu.memory[:40])
+    # print(cpu.registers.register_file)
+    # print(cpu.registers.busy_table)
     # print(cpu.reorder_buffer)
     # print(cpu.registers.RAT.free)
 
