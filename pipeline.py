@@ -246,6 +246,7 @@ class BaseUnit:
 class ALU(BaseUnit):
     def __init__(self, cpu, bypass_network, issue_queues): 
         super().__init__(bypass_network, issue_queues)
+        self.cpu = cpu
         self.decoded_instruction = None
         self.cycles_executed = 0
         self.busy = False
@@ -263,7 +264,7 @@ class ALU(BaseUnit):
         if not self.busy:
             return 
         self.cycles_executed += 1
-        if self.cycles_executed < self.decoded_instruction.n_cycles_to_execute:
+        if self.cycles_executed < self.decoded_instruction.instruction.cycles_to_execute:
             return 
         intermediate = dict()
         opcode = self.decoded_instruction.opcode
@@ -281,7 +282,8 @@ class ALU(BaseUnit):
             result = res_1 + res_2
             reg = self.decoded_instruction.dest
         elif opcode == "mul": 
-            result = self.decoded_instruction.src1 * self.decoded_instruction.src2
+            print(self.cpu.get_register_or_forwarded(self.decoded_instruction.src1), self.cpu.get_register_or_forwarded(self.decoded_instruction.src2))
+            result = int(self.cpu.get_register_or_forwarded(self.decoded_instruction.src1)) * int(self.cpu.get_register_or_forwarded(self.decoded_instruction.src2))
             reg = self.decoded_instruction.dest
         elif opcode == "addi":
             intermediate["value"] = self.registers[self.decoded_instruction.src1] + self.decoded_instruction.src2
@@ -612,10 +614,13 @@ class PipelinedProcessor(CPU):
         pass
     def write_back(self): 
         for entry in self.write_back_queue:
+            print("Writing back: dest: ", entry["dest"], "value: ", entry["value"])
             self.registers[entry["dest"]] = entry["value"]
             self.registers.busy_table[entry["dest"]] = True
+
             if entry["dest"] in self.bypass_network: 
                 self.bypass_network.pop(entry["dest"])
+        self.write_back_queue = []
 
 
     def branch_mispredict_flush(self, branch_mask=None, uuid=None): 
@@ -680,6 +685,7 @@ if __name__ == "__main__":
     print(cpu.fetch_buffer)
     print(cpu.bypass_network)
     print(cpu.branch_predictor.branch_target_buffer)
+    print(cpu.registers.register_file)
     # print(cpu.reorder_buffer)
     # print(cpu.registers.RAT.free)
 
