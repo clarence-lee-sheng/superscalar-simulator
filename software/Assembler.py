@@ -81,20 +81,26 @@ class Assembler():
                     continue 
                 instruction = self.parse_instruction(len(program), line, labels, memory_locations)
                 program.append(instruction)
-
+        program.append(Instruction(len(program), "exit", [], 0))
         registers["gp"] = labels[start_function]      
         return(program)
 
     def parse_instruction(self, pc, line, labels, memory_locations): 
+        def check_number(string): 
+            try: 
+                return float(string)
+            except ValueError: 
+                return string
         
         line = line.strip()
         line = line.replace(",", "").split()
+        line = [check_number(x) for x in line]
         
         opcode = line[0]
 
         if opcode == "la": 
             line[2] = memory_locations[line[2]]
-        elif opcode == "ecall": 
+        elif opcode == "ecall" or opcode == "exit": 
             pass 
         elif opcode == "beq" or opcode == "bne" or opcode == "blt" or opcode == "bge":
             line[3] = labels[line[3]]   
