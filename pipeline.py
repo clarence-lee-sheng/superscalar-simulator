@@ -81,7 +81,6 @@ class FetchUnit:
             if opcode == "beq" or opcode == "bne" or opcode == "bge" or opcode == "bgt" or opcode == "ble" or opcode == "blt":
                 self.statistics["branch_count"] += 1
 
-            print(instruction.pc, instruction.uuid)
             next_pc = self.branch_predictor.predict(instruction.pc, instruction.uuid)
             self.cpu.pc = next_pc
             
@@ -106,14 +105,15 @@ class DecodeUnit:
         
         def rename(instruction): 
             stale_physical_register = None 
-            if instruction.dest:
-                instruction.dest, stale_physical_register = self.register_file.rename(instruction.dest, type ="dest")
+            
             if instruction.src1: 
                 instruction.src1 = self.register_file.rename(instruction.src1, type="src")
             if instruction.src2: 
                 instruction.src2 = self.register_file.rename(instruction.src2, type="src")
             if instruction.src3:
                 instruction.src3 = self.register_file.rename(instruction.src3, type="src")
+            if instruction.dest:
+                instruction.dest, stale_physical_register = self.register_file.rename(instruction.dest, type ="dest")
             return instruction, stale_physical_register
         
         for i in range(self.n_instruction_decode_cycle): 
@@ -124,7 +124,6 @@ class DecodeUnit:
             instruction = self.fetch_buffer.dequeue()
             opcode = instruction.opcode
             operands = instruction.operands
-            print(instruction)
             if opcode == "ecall" or opcode == "exit": 
                 dest = None
                 src1 = None
@@ -193,7 +192,6 @@ class BranchUnit:
         self.cycles_executed += 1
         if self.cycles_executed < self.branch_instruction.instruction.cycles_to_execute:
             return 
-        intermediate = dict()
         opcode = self.branch_instruction.opcode
 
         if opcode == "j": 
@@ -258,6 +256,7 @@ class ALU(BaseUnit):
     def deallocate(self, result): 
         self.busy = False
         self.cycles_executed = 0
+        self.decoded_instruction = None
         return result
     def cycle(self): 
         print("ALU: ", self.decoded_instruction)
@@ -270,19 +269,9 @@ class ALU(BaseUnit):
         opcode = self.decoded_instruction.opcode
 
         if opcode == "add":
-            if self.register_file.busy_table[self.decoded_instruction.src1]: 
-                res_1 = self.register_file[self.decoded_instruction.src1]
-            else: 
-                res_1 = self.bypass_network[self.decoded_instruction.src1]
-
-            if self.register_file.busy_table[self.decoded_instruction.src2]: 
-                res_2 = self.register_file[self.decoded_instruction.src2]
-            else: 
-                res_2 = self.bypass_network[self.decoded_instruction.src2]
-            result = res_1 + res_2
+            result = int(self.cpu.get_register_or_forwarded(self.decoded_instruction.src1)) + int(self.cpu.get_register_or_forwarded(self.decoded_instruction.src2))
             reg = self.decoded_instruction.dest
         elif opcode == "mul": 
-            print(self.cpu.get_register_or_forwarded(self.decoded_instruction.src1), self.cpu.get_register_or_forwarded(self.decoded_instruction.src2))
             result = int(self.cpu.get_register_or_forwarded(self.decoded_instruction.src1)) * int(self.cpu.get_register_or_forwarded(self.decoded_instruction.src2))
             reg = self.decoded_instruction.dest
         elif opcode == "addi":
@@ -322,12 +311,14 @@ class AGU(BaseUnit):
     def allocate(self, decoded_instruction):
         self.busy = True
         self.decoded_instruction = decoded_instruction
-    def deallocate(self, result):
+    def deallocate(self):
         # print("DEALLOCATE AGU")
         self.busy = False
+        self.decoded_instruction = None
         self.cycles_executed = 0
-        self.LSU.enqueue(result)
+
     def cycle(self):
+        print("AGU: ", self.decoded_instruction)
         if not self.busy:
             return 
         self.cycles_executed += 1
@@ -343,8 +334,7 @@ class AGU(BaseUnit):
             addr = None 
             entry_type = "load"
             lsu_entry = LSU_entry(self.decoded_instruction.pc, valid, addr, data, entry_type, dest)
-
-            reg = dest 
+            reg = dest
             result = data
 
             self.cpu.write_back_queue.append({"uuid": self.decoded_instruction.uuid, "dest": reg, "value": result })
@@ -354,29 +344,42 @@ class AGU(BaseUnit):
             data = None
             dest = self.decoded_instruction.dest
             addr = self.decoded_instruction.src1
-            entry_type = "load"
-            lsu_entry = LSU_entry(self.decoded_instruction.pc, valid, addr, data, entry_type, dest)
+
+            reg = dest
+            result = addr
+
+            self.cpu.write_back_queue.append({"uuid": self.decoded_instruction.uuid, "dest": reg, "value": result })
+            
+            
         elif opcode == "lw":
             reg, offset = extract_reg_and_offset(self.decoded_instruction.src1)
             if self.register_file.busy_table[reg]: 
                 addr = offset + self.register_file[reg]
             else: 
                 addr = offset + self.bypass_network[reg]
+            entry_type = "load"
+
+            lsu_entry = LSU_entry(self.decoded_instruction.pc, valid, addr, data, entry_type, dest)
+            self.LSU.enqueue(lsu_entry)
             # compute the address
 
         elif opcode == "sw":
-            # compute the address
-            intermediate["value"] = self.decoded_instruction.src1 + self.decoded_instruction.src2
-            intermediate["type"] = "memory"
-            intermediate["id"] = self.decoded_instruction.dest
+            reg, offset = extract_reg_and_offset(self.decoded_instruction.src1)
+            if self.register_file.busy_table[reg]: 
+                addr = offset + self.register_file[reg]
+            else: 
+                addr = offset + self.bypass_network[reg]
+            entry_type = "store"
+
+            lsu_entry = LSU_entry(self.decoded_instruction.pc, valid, addr, data, entry_type, dest)
+            self.LSU.enqueue(lsu_entry, )
         else: 
             raise Exception("Invalid opcode for AGU", opcode)
         
         if reg: 
             self.broadcast(reg, result)
         
-        if self.cycles_executed > self.cycle_time:
-            self.deallocate(lsu_entry)
+        self.deallocate()
 
 
 class LSU_entry: 
@@ -415,10 +418,11 @@ class LSU:
         self.busy = True
         self.decoded_instruction = decoded_instruction
     
-    def deallocate(self, result):
+    def deallocate(self):
         self.busy = False
+        self.decoded_instruction = None
         self.cycles_executed = 0
-        return result
+        return 
     
     def cycle(self): 
         if not self.busy:
@@ -440,7 +444,8 @@ class LSU:
         self.deallocate(intermediate)
 
 class DispatchUnit: 
-    def __init__(self, register_file, decode_buffer, alu_issue_queue, mem_issue_queue, branch_issue_queue, dispatch_width=4): 
+    def __init__(self, cpu, register_file, decode_buffer, alu_issue_queue, mem_issue_queue, branch_issue_queue, dispatch_width=4): 
+        self.cpu = cpu
         self.register_file = register_file
         self.decode_buffer = decode_buffer
         self.alu_issue_queue = alu_issue_queue
@@ -470,12 +475,16 @@ class DispatchUnit:
             reg, offset = extract_reg_and_offset(src1)
             if reg in self.register_file.busy_table.keys():
                 src1_ready = self.register_file.busy_table[reg]
+                if reg in self.cpu.bypass_network.keys():
+                    src1_ready = True
             else:
                 src1_ready = True
             
             reg, offset = extract_reg_and_offset(src2)
             if reg in self.register_file.busy_table.keys():
                 src2_ready = self.register_file.busy_table[reg]
+                if reg in self.cpu.bypass_network.keys():
+                    src2_ready = True
             else:
                 src2_ready = True
 
@@ -570,6 +579,7 @@ class PipelinedProcessor(CPU):
         )
 
         self.DispatchUnit = DispatchUnit(
+            cpu = self,
             register_file = self.registers,
             decode_buffer = self.decode_buffer,
             alu_issue_queue = self.alu_issue_queue,
@@ -603,7 +613,9 @@ class PipelinedProcessor(CPU):
         self.IssueUnit.cycle()
 
     def execute(self): 
-        print(self.alu_issue_queue)
+        print("alu issue queue: ",  self.alu_issue_queue)
+        print("mem issue queue: ",  self.mem_issue_queue)
+        print("branch issue queue: ", self.branch_issue_queue)
         for unit in self.alu_execution_units: 
             unit.cycle()
         for unit in self.mem_execution_units:
@@ -620,6 +632,8 @@ class PipelinedProcessor(CPU):
 
             if entry["dest"] in self.bypass_network: 
                 self.bypass_network.pop(entry["dest"])
+
+        # print("busy table: ", self.registers.busy_table)
         self.write_back_queue = []
 
 
@@ -644,7 +658,7 @@ class PipelinedProcessor(CPU):
         self.exit = False
         self.program = self.assembler.assemble(program, self)
         self.FetchUnit.program = self.program
-        while self.statistics["cycles"] < 15: 
+        while self.statistics["cycles"] < 30: 
             self.statistics["cycles"] += 1
             print("Cycle: ", self.statistics["cycles"])
             self.reorder_buffer.commit() 
@@ -664,6 +678,7 @@ class PipelinedProcessor(CPU):
             print("fetch buffer length: ", len(self.fetch_buffer.queue))
             print("decode buffer length: ", len(self.decode_buffer.queue))
             print("write back queue length: ", len(self.write_back_queue))
+            print("Bypass network: ", self.bypass_network)
             print("-----------------------------------------")
 
         print("Number of instructions executed: ", self.statistics["instructions_count"])
@@ -686,6 +701,7 @@ if __name__ == "__main__":
     print(cpu.bypass_network)
     print(cpu.branch_predictor.branch_target_buffer)
     print(cpu.registers.register_file)
+    print(cpu.registers.busy_table)
     # print(cpu.reorder_buffer)
     # print(cpu.registers.RAT.free)
 
