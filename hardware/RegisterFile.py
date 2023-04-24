@@ -92,10 +92,11 @@ class RegisterAliasTable:
     def free(self, key): 
         assert key in [f"P{i}" for i in range(self.n_physical_registers)], "Invalid physical register"
         self.free_list.appendleft(key)
+        
 
     def __str__(self): 
-        print("Register Alias Table:")
-        print(self.table)
+        # print("Register Alias Table:")
+        return self.table.__str__()
 
 # ArchitectureRegisterFile 
 # PhysicalRegisterFile
@@ -119,6 +120,8 @@ class RegisterFile:
         self.register_file = [0] * n_physical_registers
         self.size = n_physical_registers
         self.physical_register_map = {f"P{i}": i for i in range(n_physical_registers)}
+        self.busy_table = {f"P{i}": False for i in range(n_physical_registers)}
+        self.snapshots = {}
 
     def allocate_register(self, register_name): 
         assert self.RAT.has_free(), "No free registers available"
@@ -127,8 +130,9 @@ class RegisterFile:
         else: 
             previous_physical_register = self.RAT[register_name]
             next_free_register = self.RAT.free_list.pop()
-            print(f"Allocating {next_free_register} to {register_name} (was {previous_physical_register})")
+            # print(f"Allocating {next_free_register} to {register_name} (was {previous_physical_register})")
             self.RAT[register_name] = next_free_register
+            self.busy_table[next_free_register] = False
             return previous_physical_register
             # self.RAT.free(previous_physical_register)
 
@@ -153,10 +157,31 @@ class RegisterFile:
                 return f"{offset}({self.RAT.table[reg]})"
             else:
                 return register_name
-        
+    
+    def snapshot(self, uuid): 
+        self.snapshots[uuid] = {
+            "RAT": deepcopy(self.RAT),
+            "freelist": []
+        }
+
+    def free(self, physical_register):
+        self.RAT.free(physical_register)
+        for i in self.snapshots.keys(): 
+            self.snapshots[i]["freelist"].append(physical_register)
+        self.busy_table[physical_register] = False
+    
+    def restore(self, uuid): 
+        print("Restoring", uuid)
+        print("Before: ", self.RAT)
+        self.RAT = self.snapshots[uuid]["RAT"]
+        print("After: ", self.RAT)
+        for i in self.snapshots[uuid]["freelist"]: 
+            self.RAT.free(i)     
+
         
     def __getitem__(self, key):
         if type(key) == str: 
+           
             if key in self.physical_register_map:
                 return self.register_file[self.physical_register_map[key]]
             elif key in self.architectural_registers:
@@ -168,6 +193,8 @@ class RegisterFile:
         if type(key) == str:
             if key == "zero": 
                 self.register_file[self.RAT["zero"]] = 0 
+            elif key in self.physical_register_map:
+                self.register_file[self.physical_register_map[key]] = value
             else: 
                 self.register_file[self.physical_register_map[self.RAT[key]]] = value
         else: 
