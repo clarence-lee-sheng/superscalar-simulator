@@ -201,7 +201,7 @@ class BranchUnit:
         self.cycles_executed = 0
         self.branch_instruction = None
     def cycle(self): 
-        # print("Branch Unit: ", self.branch_instruction)
+        print("Branch Unit: ", self.branch_instruction)
         if not self.busy:
             return 
         self.cycles_executed += 1
@@ -214,6 +214,13 @@ class BranchUnit:
             taken = True
         elif opcode == "beq":
             if self.cpu.get_register_or_forwarded(self.branch_instruction.src1) == self.cpu.get_register_or_forwarded(self.branch_instruction.src2):
+                target = self.branch_instruction.instruction.src3
+                taken = True
+            else:
+                target = self.branch_instruction.pc + 1
+                taken = False
+        elif opcode == "bne":
+            if self.cpu.get_register_or_forwarded(self.branch_instruction.src1) != self.cpu.get_register_or_forwarded(self.branch_instruction.src2):
                 target = self.branch_instruction.instruction.src3
                 taken = True
             else:
@@ -310,6 +317,9 @@ class ALU(BaseUnit):
             reg = self.decoded_instruction.dest
         elif opcode == "addi":  
             result = int(self.cpu.get_register_or_forwarded(self.decoded_instruction.src1)) + int(self.decoded_instruction.src2)
+            reg = self.decoded_instruction.dest
+        elif opcode == "remw": 
+            result = int(self.cpu.get_register_or_forwarded(self.decoded_instruction.src1)) % int(self.decoded_instruction.src2)
             reg = self.decoded_instruction.dest
         elif opcode == "ecall":
             intermediate["value"] = None 
@@ -770,8 +780,9 @@ class PipelinedProcessor(CPU):
     
 if __name__ == "__main__": 
     cpu = PipelinedProcessor(config)
-    cpu.run(os.path.join(os.getcwd(), "programs\\matrix_multiplication.s"))
+    # cpu.run(os.path.join(os.getcwd(), "programs\\matrix_multiplication.s"))
     # cpu.run(os.path.join(os.getcwd(), "programs\\vec_addition.s"))
+    cpu.run(os.path.join(os.getcwd(), "programs\\odd_counts.s"))
     # print(cpu.alu_issue_queue)
     # print(cpu.LSU.load_queue)
     # for entry in cpu.LSU.load_queue: 
