@@ -41,11 +41,17 @@ class Simple(CPU):
             return instruction
     def decode(self, instruction): 
         print(instruction)
-        print(self.registers.physical_registers)
+        # print(self.registers.physical_registers)
         instruction = deepcopy(instruction)
         opcode = instruction.opcode
         operands = instruction.operands
         if opcode == "add": 
+            instruction.operands[1] = self.registers[instruction.operands[1]]
+            instruction.operands[2] = self.registers[instruction.operands[2]]
+        if opcode == "sub": 
+            instruction.operands[1] = self.registers[instruction.operands[1]]
+            instruction.operands[2] = self.registers[instruction.operands[2]]
+        if opcode == "mul":
             instruction.operands[1] = self.registers[instruction.operands[1]]
             instruction.operands[2] = self.registers[instruction.operands[2]]
         if opcode == "li": 
@@ -54,6 +60,8 @@ class Simple(CPU):
             reg = re.search(r"(?<=\()(.*?)(?=\))", instruction.operands[1]).group()
             offset = re.search(r".*(?=\()", instruction.operands[1]).group()
             instruction.operands[1] = self.registers[reg] + int(offset)
+        if opcode == "remw": 
+            instruction.operands[1] = self.registers[instruction.operands[1]]
         if opcode == "sw":
             reg = re.search(r"(?<=\()(.*?)(?=\))", instruction.operands[1]).group()
             offset = re.search(r".*(?=\()", instruction.operands[1]).group()
@@ -69,6 +77,19 @@ class Simple(CPU):
         if opcode == "add":
             print(decoded.operands)
             intermediate["value"] = decoded.operands[1] + decoded.operands[2]
+            intermediate["type"] = "register"
+            intermediate["id"] = decoded.operands[0]
+        elif opcode == "sub":
+            print(decoded.operands)
+            intermediate["value"] = decoded.operands[1] - decoded.operands[2]
+            intermediate["type"] = "register"
+            intermediate["id"] = decoded.operands[0]
+        elif opcode == "mul": 
+            intermediate["value"] = decoded.operands[1] * decoded.operands[2]
+            intermediate["type"] = "register"
+            intermediate["id"] = decoded.operands[0]
+        elif opcode == "remw":
+            intermediate["value"] = decoded.operands[1] % decoded.operands[2]
             intermediate["type"] = "register"
             intermediate["id"] = decoded.operands[0]
         elif opcode == "li":
@@ -91,7 +112,12 @@ class Simple(CPU):
             intermediate["value"] = self.registers[decoded.operands[1]] + decoded.operands[2]
             intermediate["type"] = "register"
             intermediate["id"] = decoded.operands[0]
+        
         elif opcode == "ecall":
+            intermediate["value"] = None 
+            intermediate["type"] = "sys"
+            intermediate["id"] = None 
+        elif opcode == "exit":
             intermediate["value"] = None 
             intermediate["type"] = "sys"
             intermediate["id"] = None 
@@ -105,10 +131,34 @@ class Simple(CPU):
             else:
                 intermediate["type"] = "pc"
                 intermediate["value"] = self.pc + 1
+        elif opcode == "bne":
+            print("BNE", self.registers[decoded.operands[0]], self.registers[decoded.operands[1]])
+            if self.registers[decoded.operands[0]] != self.registers[decoded.operands[1]]:
+                intermediate["type"] = "pc"
+                intermediate["value"] = decoded.operands[2]
+
+            else:
+                intermediate["type"] = "pc"
+                intermediate["value"] = self.pc + 1
+        elif opcode == "bge": 
+            if self.registers[decoded.operands[0]] >= self.registers[decoded.operands[1]]:
+                intermediate["type"] = "pc"
+                intermediate["value"] = decoded.operands[2]
+            else: 
+                intermediate["type"] = "pc"
+                intermediate["value"] = self.pc + 1
+        elif opcode == "blt": 
+            if self.registers[decoded.operands[0]] < self.registers[decoded.operands[1]]:
+                intermediate["type"] = "pc"
+                intermediate["value"] = decoded.operands[2]
+            else: 
+                intermediate["type"] = "pc"
+                intermediate["value"] = self.pc + 1
         else:
             print(opcode)
         return intermediate
     def memory_access(self, intermediate):
+        print(intermediate)
         if intermediate["type"] == "register":
             self.pc += 1
         elif intermediate["type"] == "memory":
@@ -132,16 +182,18 @@ class Simple(CPU):
         pass
     def run(self, program): 
         self.program = self.assembler.assemble(program, self)
-        for instruction in self.program: 
-            print(instruction)
-        print(self.program)
+        # for instruction in self.program: 
+        #     print(instruction)
+        # print(self.program)
         while True: 
-            self.statistics["cycles"] += 5
+            
             instruction = self.fetch()
             decoded = self.decode(instruction) 
             intermediate = self.execute(decoded)
             self.memory_access(intermediate)
             self.write_back(intermediate)
+            self.statistics["cycles"] += 4 + instruction.cycles_to_execute
+            print(instruction.cycles_to_execute)
             if self.pc >= len(self.program):
                 break
         print("Number of instructions executed: ", self.statistics["instructions_count"])
@@ -152,7 +204,8 @@ class Simple(CPU):
         print("Number of loads executed: ", self.statistics["load_count"])
 
 cpu = Simple(config)
-cpu.run(os.path.join(os.getcwd(), "programs\\vec_addition.s"))
+cpu.run(os.path.join(os.getcwd(), "programs\\odd_counts.s"))
+# cpu.run(os.path.join(os.getcwd(), "programs\\matrix_multiplication.s"))
 print(cpu.registers)
 print(cpu.memory[:40])
 
