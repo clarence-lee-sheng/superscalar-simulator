@@ -110,7 +110,8 @@ class DecodeUnit:
         
         def rename(instruction): 
             stale_physical_register = None 
-            
+            if instruction.opcode == "sw": 
+                print("BEFORE RENAMING: ", instruction)
             if instruction.src1: 
                 instruction.src1 = self.register_file.rename(instruction.src1, type="src")
             if instruction.src2: 
@@ -118,7 +119,11 @@ class DecodeUnit:
             if instruction.src3:
                 instruction.src3 = self.register_file.rename(instruction.src3, type="src")
             if instruction.dest:
+                if instruction.opcode == "sw":
+                    print("RENAMING: ", instruction)
                 instruction.dest, stale_physical_register = self.register_file.rename(instruction.dest, type ="dest")
+            if instruction.opcode == "sw":
+                print("AFTER RENAMING: ", instruction)
             return instruction, stale_physical_register
         
         for i in range(self.n_instruction_decode_cycle): 
@@ -213,10 +218,13 @@ class BranchUnit:
             target = self.branch_instruction.src1
             taken = True
         elif opcode == "beq":
+            print("BEQ",self.branch_instruction.pc,  self.cpu.get_register_or_forwarded(self.branch_instruction.src1), self.cpu.get_register_or_forwarded(self.branch_instruction.src2))
             if self.cpu.get_register_or_forwarded(self.branch_instruction.src1) == self.cpu.get_register_or_forwarded(self.branch_instruction.src2):
+                print("TRUE")
                 target = self.branch_instruction.instruction.src3
                 taken = True
             else:
+                print("FALSE")
                 target = self.branch_instruction.pc + 1
                 taken = False
         elif opcode == "bne":
@@ -246,6 +254,8 @@ class BranchUnit:
             self.cpu.statistics["correct_branch_count"] += 1
         else: 
             self.cpu.statistics["mispredicted_branch_count"] += 1
+
+        print("IS CORRECT", is_correct)
         
         if not is_correct:
             
@@ -264,13 +274,14 @@ class BranchUnit:
 
 class BaseUnit: 
     def __init__(self, cpu): 
-        self.bypass_network = cpu.bypass_network 
-        self.issue_queues = cpu.issue_queues
-    
+        self.cpu = cpu 
+
     def broadcast(self, reg, result): 
-        # print("broadcasting ", reg, result)
-        self.bypass_network[reg] = result
-        for queue in self.issue_queues:
+        print("broadcasting ", reg, result)
+        if reg == "P32":
+            print("BROADCASTING P32", result)
+        self.cpu.bypass_network[reg] = result
+        for queue in self.cpu.issue_queues:
             for issue_slot in queue.queue: 
                 src1_reg, offset = extract_reg_and_offset(issue_slot.src1)
                 src2_reg, offset = extract_reg_and_offset(issue_slot.src2)
@@ -316,6 +327,7 @@ class ALU(BaseUnit):
             result = int(self.cpu.get_register_or_forwarded(self.decoded_instruction.src1)) * int(self.cpu.get_register_or_forwarded(self.decoded_instruction.src2))
             reg = self.decoded_instruction.dest
         elif opcode == "addi":  
+            print("ADDI", self.decoded_instruction.src1, self.cpu.get_register_or_forwarded(self.decoded_instruction.src1), self.decoded_instruction.src2)
             result = int(self.cpu.get_register_or_forwarded(self.decoded_instruction.src1)) + int(self.decoded_instruction.src2)
             reg = self.decoded_instruction.dest
         elif opcode == "remw": 
@@ -325,11 +337,13 @@ class ALU(BaseUnit):
             intermediate["value"] = None 
             intermediate["type"] = "sys"
             intermediate["id"] = None 
+        if reg == "P73":
+            print("ALU P73",self.decoded_instruction)
         self.broadcast(reg, result)
         self.cpu.reorder_buffer.update(self.decoded_instruction.uuid, is_exception=False, commit=True)
-        if opcode in ["add", "addi", "mul"]:
+        if opcode in ["add", "addi", "mul", "remw"]:
             # print("ADDING to write back queue")
-            self.cpu.write_back_queue.append({"uuid": self.decoded_instruction.uuid, "dest": self.decoded_instruction.dest, "value": result})
+            self.cpu.write_back_queue.append({"uuid": self.decoded_instruction.uuid, "dest": reg, "value": result})
 
         self.deallocate(intermediate)
 
@@ -361,7 +375,7 @@ class AGU(BaseUnit):
         self.cycles_executed = 0
 
     def cycle(self):
-        # print("AGU: ", self.decoded_instruction)
+        print("AGU: ", self.decoded_instruction)
         if not self.busy:
             return 
         self.cycles_executed += 1
@@ -421,6 +435,7 @@ class AGU(BaseUnit):
             result = None 
             valid = True
             data = self.cpu.get_register_or_forwarded(self.decoded_instruction.src1)
+            print("DATA", self.decoded_instruction.src1, data)
 
             lsu_entry = LSU_entry(self.decoded_instruction.pc, self.decoded_instruction.uuid, valid, addr, data, entry_type, dest)
             self.LSU.enqueue(lsu_entry)
@@ -484,7 +499,7 @@ class LSU(BaseUnit):
     
     def cycle(self): 
         # print("load queue: ", [str(i) for i in self.load_queue])
-        # print("store queue: ", [str(i) for i in self.store_queue])
+        print("store queue: ", [str(i) for i in self.store_queue])
         for i in range(self.n_memory_ports_load):
             for entry in self.load_queue: 
                 if entry.valid: 
@@ -539,6 +554,10 @@ class DispatchUnit:
 
             reg, offset = extract_reg_and_offset(src1)
             if reg in self.register_file.busy_table.keys():
+                if reg == "P32": 
+                    print("BUSY P32", self.register_file.busy_table[reg])
+                    print(reg in self.cpu.bypass_network.keys())
+                    print(self.cpu.bypass_network)
                 src1_ready = self.register_file.busy_table[reg]
                 if reg in self.cpu.bypass_network.keys():
                     src1_ready = True
@@ -703,6 +722,7 @@ class PipelinedProcessor(CPU):
     def memory_access(self): 
         self.LSU.cycle()
     def write_back(self): 
+        print("WRITE BACK QUEUE: ", self.write_back_queue)
         for entry in self.write_back_queue:
             # print("Writing back: dest: ", entry["dest"], "value: ", entry["value"])
             self.registers[entry["dest"]] = entry["value"]
@@ -717,6 +737,7 @@ class PipelinedProcessor(CPU):
 
 
     def branch_mispredict_flush(self, branch_mask=None, uuid=None): 
+        print("flushing")
         cpu.fetch_buffer.flush()
         cpu.decode_buffer.flush()
         cpu.alu_issue_queue.flush(branch_mask = branch_mask)
@@ -739,7 +760,7 @@ class PipelinedProcessor(CPU):
         self.exit = False
         self.program = self.assembler.assemble(program, self)
         self.FetchUnit.program = self.program
-        while self.statistics["cycles"] <100000: 
+        while self.statistics["cycles"] <10000: 
             self.statistics["cycles"] += 1
             # print("Cycle: ", self.statistics["cycles"])
             self.reorder_buffer.commit() 
@@ -753,6 +774,7 @@ class PipelinedProcessor(CPU):
 
             if self.exit: 
                 break
+
             # print(self.reorder_buffer)
             # print("BUSY_TABLE",self.registers.busy_table["P97"])
             # print("FREE LIST:", self.registers.RAT.free_list)
@@ -760,8 +782,8 @@ class PipelinedProcessor(CPU):
             # print("fetch buffer length: ", len(self.fetch_buffer.queue))
             # print("decode buffer length: ", len(self.decode_buffer.queue))
             # print("write back queue length: ", len(self.write_back_queue))
-            # print("Bypass network: ", self.bypass_network)
-            # print("Memory: ", self.memory[:70])
+            print("Bypass network: ", self.bypass_network)
+            # print("Memory: ", self.memory[:20])
             # print("-----------------------------------------")
 
         print("Number of instructions executed: ", self.statistics["instructions_count"])
