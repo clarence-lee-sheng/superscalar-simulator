@@ -1,0 +1,35 @@
+{ 
+    "rob_buffer_size": 4,
+    "fetch_buffer_size": 10,
+    "decode_buffer_size": 100,
+    "reorder_buffer_size": 128,
+    "mem_issue_queue_size": 32, 
+    "alu_issue_queue_size": 32,
+    "branch_issue_queue_size": 32,
+    "n_instruction_fetch_cycle": 4, 
+    "n_instruction_decode_cycle": 4,
+    "lsq_buffer_size": 4,
+    "rs_buffer_size": 4,
+    "n_gprs": 32,
+    "mem_size": 4096,
+    "dispatch_width": 4,
+    "register_file_params": {
+        "n_physical_registers": 128
+    }, 
+    "execution_units": {
+        "n_alus": 2,
+        "n_lsus": 2,
+        "n_branch_units": 1
+    },
+    "branch_predictor": {
+        "type": "one_bit", 
+        "global_history_register_size":8,
+        "local_history_register_size": 10
+    },
+    "instructions": {
+        "branch_instructions": ["beq", "bne", "blt", "bge"],
+        "jump_instructions": ["j", "jr", "jal", "jalr", "ret"],
+        "alu_instructions": ["add", "sub", "mul", "div", "addi", "subi", "muli", "divi", "remw"],
+        "load_store_instructions": ["lw", "sw", "li", "la"]
+    }
+}
