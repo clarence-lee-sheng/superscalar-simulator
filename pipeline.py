@@ -128,9 +128,9 @@ class DecodeUnit:
         
         for i in range(self.n_instruction_decode_cycle): 
             if self.decode_buffer.is_full() or self.reorder_buffer.is_full() or not self.register_file.RAT.has_free(): 
-                # print("Decode buffer full: ", self.decode_buffer.is_full())
-                # print("Reorder buffer full: ", self.reorder_buffer.is_full())
-                # print("RAT has free: ", self.register_file.RAT.has_free())
+                print("reorder buffer is full", self.reorder_buffer.is_full(), self.reorder_buffer.tail, self.reorder_buffer.head)
+                print(self.reorder_buffer.reorder_buffer[self.reorder_buffer.head], self.reorder_buffer.reorder_buffer[self.reorder_buffer.tail])
+                print("RAT is full", not self.register_file.RAT.has_free())
                 break
             if self.fetch_buffer.is_empty():
                 break
@@ -218,13 +218,12 @@ class BranchUnit:
             target = self.branch_instruction.src1
             taken = True
         elif opcode == "beq":
-            print("BEQ",self.branch_instruction.pc,  self.cpu.get_register_or_forwarded(self.branch_instruction.src1), self.cpu.get_register_or_forwarded(self.branch_instruction.src2))
+            result = self.cpu.get_register_or_forwarded(self.branch_instruction.src1) == self.cpu.get_register_or_forwarded(self.branch_instruction.src2)
+            print("BEQ, ", self.branch_instruction.instruction.branch_mask, "pc: ",self.branch_instruction.pc,  self.cpu.get_register_or_forwarded(self.branch_instruction.src1), self.cpu.get_register_or_forwarded(self.branch_instruction.src2), "result: ", result)
             if self.cpu.get_register_or_forwarded(self.branch_instruction.src1) == self.cpu.get_register_or_forwarded(self.branch_instruction.src2):
-                print("TRUE")
                 target = self.branch_instruction.instruction.src3
                 taken = True
             else:
-                print("FALSE")
                 target = self.branch_instruction.pc + 1
                 taken = False
         elif opcode == "bne":
@@ -277,9 +276,7 @@ class BaseUnit:
         self.cpu = cpu 
 
     def broadcast(self, reg, result): 
-        print("broadcasting ", reg, result)
-        if reg == "P32":
-            print("BROADCASTING P32", result)
+        # print("broadcasting ", reg, result)
         self.cpu.bypass_network[reg] = result
         for queue in self.cpu.issue_queues:
             for issue_slot in queue.queue: 
@@ -311,7 +308,7 @@ class ALU(BaseUnit):
         self.decoded_instruction = None
         return result
     def cycle(self): 
-        # print("ALU: ", self.decoded_instruction)
+        print("ALU: ", self.decoded_instruction)
         if not self.busy:
             return 
         self.cycles_executed += 1
@@ -321,13 +318,23 @@ class ALU(BaseUnit):
         opcode = self.decoded_instruction.opcode
 
         if opcode == "add":
+            print("ADD, ","pc: ", self.decoded_instruction.pc, self.decoded_instruction.src1, self.cpu.get_register_or_forwarded(self.decoded_instruction.src1), self.decoded_instruction.src2, self.cpu.get_register_or_forwarded(self.decoded_instruction.src2))
             result = int(self.cpu.get_register_or_forwarded(self.decoded_instruction.src1)) + int(self.cpu.get_register_or_forwarded(self.decoded_instruction.src2))
+            reg = self.decoded_instruction.dest
+        elif opcode == "sub":
+            result = int(self.cpu.get_register_or_forwarded(self.decoded_instruction.src1)) - int(self.cpu.get_register_or_forwarded(self.decoded_instruction.src2))
+            reg = self.decoded_instruction.dest
+        elif opcode == "subi":
+            result = int(self.cpu.get_register_or_forwarded(self.decoded_instruction.src1)) - int(self.decoded_instruction.src2)
+            reg = self.decoded_instruction.dest
+        elif opcode == "div": 
+            result = int(self.cpu.get_register_or_forwarded(self.decoded_instruction.src1)) // int(self.cpu.get_register_or_forwarded(self.decoded_instruction.src2))
             reg = self.decoded_instruction.dest
         elif opcode == "mul": 
             result = int(self.cpu.get_register_or_forwarded(self.decoded_instruction.src1)) * int(self.cpu.get_register_or_forwarded(self.decoded_instruction.src2))
             reg = self.decoded_instruction.dest
         elif opcode == "addi":  
-            print("ADDI", self.decoded_instruction.src1, self.cpu.get_register_or_forwarded(self.decoded_instruction.src1), self.decoded_instruction.src2)
+            print("ADDI, ","pc: ", self.decoded_instruction.pc, self.decoded_instruction.src1, self.cpu.get_register_or_forwarded(self.decoded_instruction.src1), self.decoded_instruction.src2)
             result = int(self.cpu.get_register_or_forwarded(self.decoded_instruction.src1)) + int(self.decoded_instruction.src2)
             reg = self.decoded_instruction.dest
         elif opcode == "remw": 
@@ -337,11 +344,9 @@ class ALU(BaseUnit):
             intermediate["value"] = None 
             intermediate["type"] = "sys"
             intermediate["id"] = None 
-        if reg == "P73":
-            print("ALU P73",self.decoded_instruction)
         self.broadcast(reg, result)
         self.cpu.reorder_buffer.update(self.decoded_instruction.uuid, is_exception=False, commit=True)
-        if opcode in ["add", "addi", "mul", "remw"]:
+        if opcode in ["sub", "subi", "div", "add", "addi", "mul", "remw"]:
             # print("ADDING to write back queue")
             self.cpu.write_back_queue.append({"uuid": self.decoded_instruction.uuid, "dest": reg, "value": result})
 
@@ -433,7 +438,7 @@ class AGU(BaseUnit):
 
             dest = None
             result = None 
-            valid = True
+            valid = False
             data = self.cpu.get_register_or_forwarded(self.decoded_instruction.src1)
             print("DATA", self.decoded_instruction.src1, data)
 
@@ -513,12 +518,11 @@ class LSU(BaseUnit):
         for i in range(self.n_memory_ports_store):
             for entry in self.store_queue: 
                 if entry.valid: 
-                    # print("Storing: ", entry.data, "at", entry.addr)
+                    
+                    print("Storing: ", entry.data, "at", entry.addr)
                     self.memory[entry.addr] = entry.data
                     self.store_queue.remove(entry)
-                    break
-                else:
-                    break
+                    
  
         
 class DispatchUnit: 
@@ -630,8 +634,10 @@ class PipelinedProcessor(CPU):
         # self.branch_predictor = StaticBranchPredictor(cpu = self)
         # self.branch_predictor = TwoBitBranchPredictor(cpu = self)
 
-        if config["branch_predictor"]["type"] == "static":
-            self.branch_predictor = StaticBranchPredictor(cpu = self)
+        if config["branch_predictor"]["type"] == "static_taken":
+            self.branch_predictor = StaticBranchPredictor(cpu = self, always_taken=True)
+        elif config["branch_predictor"]["type"] == "static_not_taken":
+            self.branch_predictor = StaticBranchPredictor(cpu = self, always_taken=False)
         elif config["branch_predictor"]["type"] == "one_bit":
             self.branch_predictor = OneBitBranchPredictor(cpu = self)
         elif config["branch_predictor"]["type"] == "two_bit":
@@ -713,6 +719,9 @@ class PipelinedProcessor(CPU):
         # print("alu issue queue: ",  self.alu_issue_queue)
         # print("mem issue queue: ",  self.mem_issue_queue)
         # print("branch issue queue: ", self.branch_issue_queue)
+        # print("alu issue queue length: ", len(self.alu_issue_queue.queue))
+        # print("mem issue queue length: ", len(self.mem_issue_queue.queue))
+        # print("branch issue queue length: ", len(self.branch_issue_queue.queue))
         for unit in self.alu_execution_units: 
             unit.cycle()
         for unit in self.mem_execution_units:
@@ -722,7 +731,7 @@ class PipelinedProcessor(CPU):
     def memory_access(self): 
         self.LSU.cycle()
     def write_back(self): 
-        print("WRITE BACK QUEUE: ", self.write_back_queue)
+        # print("WRITE BACK QUEUE: ", self.write_back_queue)
         for entry in self.write_back_queue:
             # print("Writing back: dest: ", entry["dest"], "value: ", entry["value"])
             self.registers[entry["dest"]] = entry["value"]
@@ -737,14 +746,18 @@ class PipelinedProcessor(CPU):
 
 
     def branch_mispredict_flush(self, branch_mask=None, uuid=None): 
-        print("flushing")
+        # print("flushing")
         cpu.fetch_buffer.flush()
         cpu.decode_buffer.flush()
         cpu.alu_issue_queue.flush(branch_mask = branch_mask)
         cpu.mem_issue_queue.flush(branch_mask = branch_mask)
         cpu.branch_issue_queue.flush(branch_mask = branch_mask)
-        cpu.reorder_buffer.flush(uuid = uuid)
+        # print("reorder buffer flushed", branch_mask)
         cpu.registers.restore(uuid = uuid)
+        # print("flushing reorder buffer")
+        cpu.reorder_buffer.flush(uuid = uuid)
+        
+        # print("flushing done")
 
     def get_register_or_forwarded(self, reg): 
         # print("Register: ", reg)
@@ -760,7 +773,7 @@ class PipelinedProcessor(CPU):
         self.exit = False
         self.program = self.assembler.assemble(program, self)
         self.FetchUnit.program = self.program
-        while self.statistics["cycles"] <10000: 
+        while self.statistics["cycles"] <1000000: 
             self.statistics["cycles"] += 1
             # print("Cycle: ", self.statistics["cycles"])
             self.reorder_buffer.commit() 
@@ -779,11 +792,14 @@ class PipelinedProcessor(CPU):
             # print("BUSY_TABLE",self.registers.busy_table["P97"])
             # print("FREE LIST:", self.registers.RAT.free_list)
             # print("Reorder buffer: ", self.reorder_buffer)
-            # print("fetch buffer length: ", len(self.fetch_buffer.queue))
-            # print("decode buffer length: ", len(self.decode_buffer.queue))
+            # print("Reorder buffer tail and head: ", self.reorder_buffer.tail, self.reorder_buffer.head)
+            # print("Reorder buffer head: ", self.reorder_buffer.reorder_buffer[self.reorder_buffer.head])
+            print("fetch buffer length: ", len(self.fetch_buffer.queue))
+            print("decode buffer length: ", len(self.decode_buffer.queue))
             # print("write back queue length: ", len(self.write_back_queue))
-            print("Bypass network: ", self.bypass_network)
-            # print("Memory: ", self.memory[:20])
+            # print("Bypass network: ", self.bypass_network)
+            # print(self.registers.register_file)
+            print("Memory: ", self.memory[:20])
             # print("-----------------------------------------")
 
         print("Number of instructions executed: ", self.statistics["instructions_count"])
@@ -804,7 +820,8 @@ if __name__ == "__main__":
     cpu = PipelinedProcessor(config)
     # cpu.run(os.path.join(os.getcwd(), "programs\\matrix_multiplication.s"))
     # cpu.run(os.path.join(os.getcwd(), "programs\\vec_addition.s"))
-    cpu.run(os.path.join(os.getcwd(), "programs\\odd_counts.s"))
+    # cpu.run(os.path.join(os.getcwd(), "programs\\odd_counts.s"))
+    cpu.run(os.path.join(os.getcwd(), "programs\\convolution.s"))
     # print(cpu.alu_issue_queue)
     # print(cpu.LSU.load_queue)
     # for entry in cpu.LSU.load_queue: 
