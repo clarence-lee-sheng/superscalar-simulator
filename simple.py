@@ -112,6 +112,14 @@ class Simple(CPU):
             intermediate["value"] = self.registers[decoded.operands[1]] + decoded.operands[2]
             intermediate["type"] = "register"
             intermediate["id"] = decoded.operands[0]
+        elif opcode == "subi": 
+            intermediate["value"] = self.registers[decoded.operands[1]] - decoded.operands[2]
+            intermediate["type"] = "register"
+            intermediate["id"] = decoded.operands[0]
+        elif opcode == "div": 
+            intermediate["value"] = self.registers[decoded.operands[1]] / self.registers[decoded.operands[2]]
+            intermediate["type"] = "register"
+            intermediate["id"] = decoded.operands[0]
         
         elif opcode == "ecall":
             intermediate["value"] = None 
@@ -163,6 +171,7 @@ class Simple(CPU):
             self.pc += 1
         elif intermediate["type"] == "memory":
             print(intermediate["id"])
+            intermediate["id"] = int(intermediate["id"])
             self.memory[intermediate["id"]] = intermediate["value"]
             self.pc += 1
         elif intermediate["type"] == "sys":
@@ -204,8 +213,10 @@ class Simple(CPU):
         print("Number of loads executed: ", self.statistics["load_count"])
 
 cpu = Simple(config)
-cpu.run(os.path.join(os.getcwd(), "programs\\odd_counts.s"))
+# cpu.run(os.path.join(os.getcwd(), "programs\\odd_counts.s"))
+# cpu.run(os.path.join(os.getcwd(), "programs\\vec_addition.s"))
 # cpu.run(os.path.join(os.getcwd(), "programs\\matrix_multiplication.s"))
+cpu.run(os.path.join(os.getcwd(), "programs\\convolution.s"))
 print(cpu.registers)
-print(cpu.memory[:40])
+print(cpu.memory[:400])
 
