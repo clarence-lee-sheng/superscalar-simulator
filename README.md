@@ -1,5 +1,8 @@
-"# superscalar-simulator" 
+# RISC-V Superscalar CPU simulator
 
+![](assets\architecture_diagram.png)
+
+For full description of the project refer to final slides [here](final_slides.pdf)
 
 ### Useful links: 
 1. Design this project was inspired by: https://docs.boom-core.org/en/latest/sections/intro-overview/boom.html 
