@@ -1,6 +1,6 @@
 # RISC-V Superscalar CPU simulator
 
-![](assets\architecture_diagram.png)
+![](./assets/architecture_diagram.png)
 
 For full description of the project refer to final slides [here](final_slides.pdf)
 
